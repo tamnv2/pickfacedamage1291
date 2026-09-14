@@ -6,6 +6,7 @@ namespace PickfaceDamage1291;
 internal static class Database
 {
     private static string ConnectionString => $"Data Source={AppPaths.DatabaseFile};Cache=Shared";
+    private const string ReportColumns = "report_id,occurred_date,occurred_hour,occurred_minute,shift,sku,product_name,location,quantity,base_unit,created_at,sync_status,synced_at,last_error,created_by,version,updated_at,updated_by";
 
     public static void Initialize()
     {
@@ -60,7 +61,11 @@ CREATE TABLE IF NOT EXISTS damage_reports (
     created_at TEXT NOT NULL,
     sync_status TEXT NOT NULL,
     synced_at TEXT,
-    last_error TEXT
+    last_error TEXT,
+    created_by TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT,
+    updated_by TEXT
 );
 CREATE TABLE IF NOT EXISTS damage_images (
     report_id TEXT NOT NULL,
@@ -75,6 +80,25 @@ CREATE INDEX IF NOT EXISTS idx_damage_created ON damage_reports(created_at DESC)
 CREATE INDEX IF NOT EXISTS idx_damage_status ON damage_reports(sync_status);
 """;
         cmd.ExecuteNonQuery();
+
+        // Safe migration for databases created by v1.0/v1.1.
+        EnsureColumn(cn, "damage_reports", "created_by", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(cn, "damage_reports", "version", "INTEGER NOT NULL DEFAULT 1");
+        EnsureColumn(cn, "damage_reports", "updated_at", "TEXT");
+        EnsureColumn(cn, "damage_reports", "updated_by", "TEXT");
+    }
+
+    private static void EnsureColumn(SqliteConnection cn, string table, string column, string definition)
+    {
+        using var info = cn.CreateCommand();
+        info.CommandText = $"PRAGMA table_info({table})";
+        using var reader = info.ExecuteReader();
+        while (reader.Read())
+            if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase)) return;
+        reader.Close();
+        using var alter = cn.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition}";
+        alter.ExecuteNonQuery();
     }
 
     private static SqliteConnection Open()
@@ -223,7 +247,6 @@ LIMIT $limit
             import.Parameters.AddWithValue("$i", preview.InvalidRows);
             import.ExecuteNonQuery();
         }
-
         tx.Commit();
     }
 
@@ -235,21 +258,12 @@ LIMIT $limit
         {
             cmd.Transaction = tx;
             cmd.CommandText = """
-INSERT INTO damage_reports(report_id,occurred_date,occurred_hour,occurred_minute,shift,sku,product_name,location,quantity,base_unit,created_at,sync_status,synced_at,last_error)
-VALUES($id,$date,$h,$m,$shift,$sku,$name,$loc,$qty,$base,$created,$status,NULL,NULL)
+INSERT INTO damage_reports(report_id,occurred_date,occurred_hour,occurred_minute,shift,sku,product_name,location,quantity,base_unit,created_at,sync_status,synced_at,last_error,created_by,version,updated_at,updated_by)
+VALUES($id,$date,$h,$m,$shift,$sku,$name,$loc,$qty,$base,$created,$status,NULL,NULL,$createdBy,$version,NULL,NULL)
 """;
-            cmd.Parameters.AddWithValue("$id", report.ReportId);
-            cmd.Parameters.AddWithValue("$date", report.OccurredDate.ToString("yyyy-MM-dd"));
-            cmd.Parameters.AddWithValue("$h", report.Hour);
-            cmd.Parameters.AddWithValue("$m", report.Minute);
-            cmd.Parameters.AddWithValue("$shift", report.Shift);
-            cmd.Parameters.AddWithValue("$sku", report.Sku);
-            cmd.Parameters.AddWithValue("$name", report.ProductName);
-            cmd.Parameters.AddWithValue("$loc", report.Location);
-            cmd.Parameters.AddWithValue("$qty", report.Quantity.ToString(CultureInfo.InvariantCulture));
-            cmd.Parameters.AddWithValue("$base", report.BaseUnit);
-            cmd.Parameters.AddWithValue("$created", report.CreatedAt.ToUniversalTime().ToString("O"));
-            cmd.Parameters.AddWithValue("$status", report.SyncStatus);
+            BindReportParameters(cmd, report);
+            cmd.Parameters.AddWithValue("$createdBy", report.CreatedBy ?? string.Empty);
+            cmd.Parameters.AddWithValue("$version", Math.Max(1, report.Version));
             cmd.ExecuteNonQuery();
         }
 
@@ -266,11 +280,87 @@ VALUES($id,$date,$h,$m,$shift,$sku,$name,$loc,$qty,$base,$created,$status,NULL,N
         tx.Commit();
     }
 
+    private static void BindReportParameters(SqliteCommand cmd, DamageReport report)
+    {
+        cmd.Parameters.AddWithValue("$id", report.ReportId);
+        cmd.Parameters.AddWithValue("$date", report.OccurredDate.ToString("yyyy-MM-dd"));
+        cmd.Parameters.AddWithValue("$h", report.Hour);
+        cmd.Parameters.AddWithValue("$m", report.Minute);
+        cmd.Parameters.AddWithValue("$shift", report.Shift);
+        cmd.Parameters.AddWithValue("$sku", report.Sku);
+        cmd.Parameters.AddWithValue("$name", report.ProductName);
+        cmd.Parameters.AddWithValue("$loc", report.Location);
+        cmd.Parameters.AddWithValue("$qty", report.Quantity.ToString(CultureInfo.InvariantCulture));
+        cmd.Parameters.AddWithValue("$base", report.BaseUnit);
+        cmd.Parameters.AddWithValue("$created", report.CreatedAt.ToUniversalTime().ToString("O"));
+        cmd.Parameters.AddWithValue("$status", report.SyncStatus);
+    }
+
+    public static DamageReport UpdateDamageReport(DamageReport proposed, IReadOnlyList<DamageImage> images, string updatedBy)
+    {
+        var current = GetReportById(proposed.ReportId) ?? throw new InvalidOperationException("Không tìm thấy phiếu cần sửa trong dữ liệu local.");
+        var now = DateTime.Now;
+        var updated = proposed with
+        {
+            CreatedAt = current.CreatedAt,
+            CreatedBy = current.CreatedBy,
+            Version = Math.Max(1, current.Version) + 1,
+            UpdatedAt = now,
+            UpdatedBy = updatedBy,
+            SyncStatus = "PENDING",
+            SyncedAt = null,
+            LastError = null
+        };
+
+        using var cn = Open();
+        using var tx = cn.BeginTransaction();
+        using (var cmd = cn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+UPDATE damage_reports SET
+ occurred_date=$date, occurred_hour=$h, occurred_minute=$m, shift=$shift,
+ sku=$sku, product_name=$name, location=$loc, quantity=$qty, base_unit=$base,
+ sync_status='PENDING', synced_at=NULL, last_error=NULL,
+ version=$version, updated_at=$updatedAt, updated_by=$updatedBy
+WHERE report_id=$id
+""";
+            BindReportParameters(cmd, updated);
+            cmd.Parameters.AddWithValue("$version", updated.Version);
+            cmd.Parameters.AddWithValue("$updatedAt", now.ToUniversalTime().ToString("O"));
+            cmd.Parameters.AddWithValue("$updatedBy", updatedBy);
+            if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException("Không cập nhật được phiếu local.");
+        }
+
+        using (var del = cn.CreateCommand())
+        {
+            del.Transaction = tx;
+            del.CommandText = "DELETE FROM damage_images WHERE report_id=$id";
+            del.Parameters.AddWithValue("$id", updated.ReportId);
+            del.ExecuteNonQuery();
+        }
+        var seq = 1;
+        foreach (var image in images.Take(5))
+        {
+            using var ins = cn.CreateCommand();
+            ins.Transaction = tx;
+            ins.CommandText = "INSERT INTO damage_images(report_id,sequence,local_path,drive_file_id,drive_link) VALUES($id,$seq,$path,$file,$link)";
+            ins.Parameters.AddWithValue("$id", updated.ReportId);
+            ins.Parameters.AddWithValue("$seq", seq++);
+            ins.Parameters.AddWithValue("$path", image.LocalPath);
+            ins.Parameters.AddWithValue("$file", (object?)image.DriveFileId ?? DBNull.Value);
+            ins.Parameters.AddWithValue("$link", (object?)image.DriveLink ?? DBNull.Value);
+            ins.ExecuteNonQuery();
+        }
+        tx.Commit();
+        return updated;
+    }
+
     public static List<DamageReport> GetReports(int limit = 500)
     {
         using var cn = Open();
         using var cmd = cn.CreateCommand();
-        cmd.CommandText = "SELECT report_id,occurred_date,occurred_hour,occurred_minute,shift,sku,product_name,location,quantity,base_unit,created_at,sync_status,synced_at,last_error FROM damage_reports ORDER BY created_at DESC LIMIT $limit";
+        cmd.CommandText = $"SELECT {ReportColumns} FROM damage_reports ORDER BY created_at DESC LIMIT $limit";
         cmd.Parameters.AddWithValue("$limit", limit);
         using var r = cmd.ExecuteReader();
         var result = new List<DamageReport>();
@@ -278,11 +368,21 @@ VALUES($id,$date,$h,$m,$shift,$sku,$name,$loc,$qty,$base,$created,$status,NULL,N
         return result;
     }
 
+    public static DamageReport? GetReportById(string reportId)
+    {
+        using var cn = Open();
+        using var cmd = cn.CreateCommand();
+        cmd.CommandText = $"SELECT {ReportColumns} FROM damage_reports WHERE report_id=$id";
+        cmd.Parameters.AddWithValue("$id", reportId);
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? ReadReport(r) : null;
+    }
+
     public static List<DamageReport> GetPendingReports()
     {
         using var cn = Open();
         using var cmd = cn.CreateCommand();
-        cmd.CommandText = "SELECT report_id,occurred_date,occurred_hour,occurred_minute,shift,sku,product_name,location,quantity,base_unit,created_at,sync_status,synced_at,last_error FROM damage_reports WHERE sync_status<>'SYNCED' ORDER BY created_at";
+        cmd.CommandText = $"SELECT {ReportColumns} FROM damage_reports WHERE sync_status<>'SYNCED' ORDER BY created_at";
         using var r = cmd.ExecuteReader();
         var result = new List<DamageReport>();
         while (r.Read()) result.Add(ReadReport(r));
@@ -295,7 +395,11 @@ VALUES($id,$date,$h,$m,$shift,$sku,$name,$loc,$qty,$base,$created,$status,NULL,N
         decimal.Parse(r.GetString(8), CultureInfo.InvariantCulture), r.GetString(9),
         DateTime.Parse(r.GetString(10), null, DateTimeStyles.RoundtripKind).ToLocalTime(), r.GetString(11),
         r.IsDBNull(12) ? null : DateTime.Parse(r.GetString(12), null, DateTimeStyles.RoundtripKind).ToLocalTime(),
-        r.IsDBNull(13) ? null : r.GetString(13));
+        r.IsDBNull(13) ? null : r.GetString(13),
+        r.IsDBNull(14) ? string.Empty : r.GetString(14),
+        r.IsDBNull(15) ? 1 : r.GetInt32(15),
+        r.IsDBNull(16) ? null : DateTime.Parse(r.GetString(16), null, DateTimeStyles.RoundtripKind).ToLocalTime(),
+        r.IsDBNull(17) ? null : r.GetString(17));
 
     public static List<DamageImage> GetImages(string reportId)
     {
