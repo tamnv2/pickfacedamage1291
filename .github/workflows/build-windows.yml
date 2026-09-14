@@ -2,7 +2,7 @@ name: Build Windows Portable
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/firebase-auth-session-v2]
     paths:
       - 'src/**'
       - '.github/workflows/build-windows.yml'
