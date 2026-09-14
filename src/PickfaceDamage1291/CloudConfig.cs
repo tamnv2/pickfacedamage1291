@@ -12,14 +12,13 @@ internal static class CloudConfig
     public const string DriveImageFolderId = "1K_lUl_uE4dskR28cVK4iZJrzFUINfvXf";
     public const string DamageSpreadsheetId = "1Ubm9EhALocUovzVr3UIspdCMtHIPm2NPUw6UjlZcqw4";
 
-    // Desktop OAuth Client ID is public metadata and may be embedded after OWNER supplies it.
-    // Client secret is intentionally not used by the desktop app.
-    public const string GoogleOAuthClientId = "";
+    // Desktop OAuth Client ID is public metadata. No client secret is used by the desktop app.
+    public const string GoogleOAuthClientId = "78092201115-vh15d3ijur18v0qaga7327pv8m786ooi.apps.googleusercontent.com";
 
-    // Firebase public client configuration. Fill only after Firebase is added to the
-    // approved Google Cloud project above. Do not put service-account credentials here.
-    public const string FirebaseApiKey = "";
-    public const string FirebaseDatabaseUrl = "";
+    // Firebase client configuration is public metadata. Security comes from Authentication
+    // and Realtime Database Security Rules, not from hiding these values.
+    public const string FirebaseApiKey = "AIzaSyD6aKmuZSbcl5HAqnb7fNv_RaD6v4gQABU";
+    public const string FirebaseDatabaseUrl = "https://pickface-damage-1291-default-rtdb.asia-southeast1.firebasedatabase.app";
 
     public const string GitHubRepository = "tamnv2/pickfacedamage1291";
     public const string GitHubLatestReleaseApi = "https://api.github.com/repos/tamnv2/pickfacedamage1291/releases/latest";
