@@ -84,7 +84,7 @@ internal sealed class LoginForm : Form
             AutoSize = true,
             MaximumSize = new Size(430, 0),
             ForeColor = Color.DimGray,
-            Text = "Offline chỉ dùng được nếu tài khoản đã đăng nhập online trên chính laptop này trước đó. USER chỉ được tiếp tục khi lease offline 30 phút còn hiệu lực. ADMIN không chiếm quyền nhập của USER."
+            Text = "Offline chỉ dùng được nếu tài khoản đã đăng nhập online trên chính laptop này trước đó. USER có quyền nhập hư hỏng chỉ được tiếp tục khi lease offline 30 phút còn hiệu lực. ADMIN không chiếm quyền nhập của USER."
         };
         root.Controls.Add(note, 0, 6);
         Controls.Add(root);
@@ -115,10 +115,10 @@ internal sealed class LoginForm : Form
         }
 
         _email.Text = _cached.Email;
-        if (_cached.Profile.IsAdmin)
+        if (_cached.Profile.IsAdmin || !_cached.Profile.HasPermission("damage_entry"))
         {
             _offline.Enabled = true;
-            _status.Text = $"Có phiên đã lưu: {_cached.Profile.Username} (ADMIN).";
+            _status.Text = $"Có phiên đã lưu: {_cached.Profile.Username} ({_cached.Profile.Role.ToUpperInvariant()}).";
             return;
         }
 
@@ -146,7 +146,7 @@ internal sealed class LoginForm : Form
             var session = await FirebaseClient.SignInAsync(email, _password.Text);
             OperatorLeaseManager? manager = null;
 
-            if (!session.Profile.IsAdmin)
+            if (!session.Profile.IsAdmin && session.Profile.HasPermission("damage_entry"))
             {
                 manager = new OperatorLeaseManager(session);
                 _status.Text = "Đang kiểm tra người đang giữ quyền nhập...";
@@ -232,7 +232,7 @@ internal sealed class LoginForm : Form
         }
 
         _cached.OfflineMode = true;
-        if (_cached.Profile.IsAdmin)
+        if (_cached.Profile.IsAdmin || !_cached.Profile.HasPermission("damage_entry"))
         {
             AppSession.Current = _cached;
             AppSession.OperatorManager = null;
@@ -262,6 +262,7 @@ internal sealed class LoginForm : Form
     {
         _login.Enabled = !busy;
         _offline.Enabled = !busy && (_cached?.Profile.IsAdmin == true ||
+            _cached?.Profile.HasPermission("damage_entry") == false ||
             (_cached?.CachedOperator is not null && _cached.CachedOperator.LeaseUntil > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         _email.Enabled = !busy;
         _password.Enabled = !busy;
