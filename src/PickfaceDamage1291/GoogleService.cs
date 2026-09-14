@@ -11,22 +11,28 @@ namespace PickfaceDamage1291;
 internal static class GoogleService
 {
     private const string DriveScope = "https://www.googleapis.com/auth/drive.file";
-    private const string DefaultAuthUri = "https://accounts.google.com/o/oauth2/v2/auth";
-    private const string DefaultTokenUri = "https://oauth2.googleapis.com/token";
+    private const string AuthUri = "https://accounts.google.com/o/oauth2/v2/auth";
+    private const string TokenUri = "https://oauth2.googleapis.com/token";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(3) };
+
+    public static bool IsClientConfigured() => !string.IsNullOrWhiteSpace(CloudConfig.GoogleOAuthClientId);
 
     public static bool IsConnected()
     {
         var s = SettingsStore.Load();
-        return !string.IsNullOrWhiteSpace(s.RefreshToken) ||
-               (!string.IsNullOrWhiteSpace(s.AccessToken) && s.AccessTokenExpiresUtc > DateTime.UtcNow);
+        return IsClientConfigured() &&
+               (!string.IsNullOrWhiteSpace(s.RefreshToken) ||
+                (!string.IsNullOrWhiteSpace(s.AccessToken) && s.AccessTokenExpiresUtc > DateTime.UtcNow));
     }
 
-    public static async Task AuthorizeAsync(string clientJsonPath)
+    public static async Task AuthorizeAsync()
     {
-        var client = LoadClient(clientJsonPath);
+        if (!IsClientConfigured())
+            throw new InvalidOperationException("Google OAuth Client ID chưa được cấu hình trong bản build này.");
+
         var verifier = Base64Url(RandomNumberGenerator.GetBytes(48));
         var challenge = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+        var state = Base64Url(RandomNumberGenerator.GetBytes(24));
 
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -34,12 +40,13 @@ internal static class GoogleService
         {
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             var redirectUri = $"http://127.0.0.1:{port}/";
-            var authUrl = client.AuthUri +
-                          $"?client_id={Esc(client.ClientId)}" +
+            var authUrl = AuthUri +
+                          $"?client_id={Esc(CloudConfig.GoogleOAuthClientId)}" +
                           $"&redirect_uri={Esc(redirectUri)}" +
                           "&response_type=code" +
                           $"&scope={Esc(DriveScope)}" +
                           "&access_type=offline&prompt=consent" +
+                          $"&state={Esc(state)}" +
                           $"&code_challenge={Esc(challenge)}&code_challenge_method=S256";
 
             Process.Start(new ProcessStartInfo(authUrl) { UseShellExecute = true });
@@ -53,6 +60,7 @@ internal static class GoogleService
             var parts = requestLine.Split(' ');
             if (parts.Length < 2) throw new InvalidOperationException("Phản hồi OAuth không hợp lệ.");
             var query = ParseQuery(new Uri("http://127.0.0.1" + parts[1]).Query);
+
             var html = "<html><body style='font-family:Segoe UI'><h3>Đã nhận xác thực Google.</h3><p>Có thể đóng tab này và quay lại ứng dụng.</p></body></html>";
             var body = Encoding.UTF8.GetBytes(html);
             var header = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n");
@@ -62,32 +70,36 @@ internal static class GoogleService
 
             if (query.TryGetValue("error", out var oauthError))
                 throw new InvalidOperationException($"Google OAuth từ chối: {oauthError}");
+            if (!query.TryGetValue("state", out var returnedState) || !FixedEquals(state, returnedState))
+                throw new InvalidOperationException("Phản hồi OAuth không đúng phiên xác thực hiện tại.");
             if (!query.TryGetValue("code", out var code) || string.IsNullOrWhiteSpace(code))
                 throw new InvalidOperationException("Không nhận được authorization code từ Google.");
 
             using var form = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["client_id"] = client.ClientId,
-                ["client_secret"] = client.ClientSecret,
+                ["client_id"] = CloudConfig.GoogleOAuthClientId,
                 ["code"] = code,
                 ["code_verifier"] = verifier,
                 ["redirect_uri"] = redirectUri,
                 ["grant_type"] = "authorization_code"
             });
-            using var response = await Http.PostAsync(client.TokenUri, form);
+            using var response = await Http.PostAsync(TokenUri, form);
             var json = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Không lấy được Google token: {json}");
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             var settings = SettingsStore.Load();
-            settings.OAuthClientJsonPath = clientJsonPath;
+            BindFixedResourceIds(settings);
+            settings.OAuthClientJsonPath = string.Empty;
             settings.AccessToken = root.GetProperty("access_token").GetString() ?? string.Empty;
             if (root.TryGetProperty("refresh_token", out var refresh))
                 settings.RefreshToken = refresh.GetString() ?? settings.RefreshToken;
             var expires = root.TryGetProperty("expires_in", out var exp) ? exp.GetInt32() : 3600;
             settings.AccessTokenExpiresUtc = DateTime.UtcNow.AddSeconds(Math.Max(60, expires - 30));
             SettingsStore.Save(settings);
+
+            await VerifyBindingAsync();
         }
         finally
         {
@@ -95,15 +107,41 @@ internal static class GoogleService
         }
     }
 
-    public static async Task ProvisionAsync()
+    /// <summary>
+    /// Compatibility name kept for the existing UI. This method never creates a parent
+    /// folder or searches outside the approved Drive root. It only verifies the three
+    /// fixed resources and refreshes the Sheet header.
+    /// </summary>
+    public static async Task ProvisionAsync() => await VerifyBindingAsync(writeHeaders: true);
+
+    public static async Task VerifyBindingAsync(bool writeHeaders = false)
     {
         var settings = SettingsStore.Load();
+        BindFixedResourceIds(settings);
         await EnsureAccessTokenAsync(settings);
 
-        settings.RootFolderId = await EnsureFolderAsync(settings, "CẬP NHẬT HƯ HỎNG PICKFACE", null, settings.RootFolderId);
-        settings.ImageFolderId = await EnsureFolderAsync(settings, "Ảnh hàng hư hỏng", settings.RootFolderId, settings.ImageFolderId);
-        settings.SpreadsheetId = await EnsureSpreadsheetAsync(settings, settings.RootFolderId, settings.SpreadsheetId);
-        await WriteHeadersAsync(settings);
+        await ValidateDriveResourceAsync(
+            settings,
+            CloudConfig.DriveRootFolderId,
+            "application/vnd.google-apps.folder",
+            expectedParentId: null,
+            "thư mục gốc CẬP NHẬT HƯ HỎNG PICKFACE");
+
+        await ValidateDriveResourceAsync(
+            settings,
+            CloudConfig.DriveImageFolderId,
+            "application/vnd.google-apps.folder",
+            CloudConfig.DriveRootFolderId,
+            "thư mục Ảnh hàng hư hỏng");
+
+        await ValidateDriveResourceAsync(
+            settings,
+            CloudConfig.DamageSpreadsheetId,
+            "application/vnd.google-apps.spreadsheet",
+            CloudConfig.DriveRootFolderId,
+            "Google Sheet dữ liệu hư hỏng");
+
+        if (writeHeaders) await WriteHeadersAsync(settings);
         SettingsStore.Save(settings);
     }
 
@@ -122,9 +160,7 @@ internal static class GoogleService
         try
         {
             var settings = SettingsStore.Load();
-            if (string.IsNullOrWhiteSpace(settings.SpreadsheetId) || string.IsNullOrWhiteSpace(settings.ImageFolderId))
-                throw new InvalidOperationException("Chưa thiết lập Google Drive/Sheet. Vào Cài đặt > Khởi tạo Drive & Sheet.");
-
+            BindFixedResourceIds(settings);
             await EnsureAccessTokenAsync(settings);
             Database.SetReportStatus(report.ReportId, "SYNCING");
 
@@ -159,24 +195,29 @@ internal static class GoogleService
         }
     }
 
+    private static void BindFixedResourceIds(GoogleSettings settings)
+    {
+        settings.RootFolderId = CloudConfig.DriveRootFolderId;
+        settings.ImageFolderId = CloudConfig.DriveImageFolderId;
+        settings.SpreadsheetId = CloudConfig.DamageSpreadsheetId;
+    }
+
     private static async Task EnsureAccessTokenAsync(GoogleSettings settings)
     {
+        if (!IsClientConfigured())
+            throw new InvalidOperationException("Google OAuth Client ID chưa được cấu hình trong bản build này.");
         if (!string.IsNullOrWhiteSpace(settings.AccessToken) && settings.AccessTokenExpiresUtc > DateTime.UtcNow.AddMinutes(2))
             return;
         if (string.IsNullOrWhiteSpace(settings.RefreshToken))
-            throw new InvalidOperationException("Chưa kết nối tài khoản Google.");
-        if (string.IsNullOrWhiteSpace(settings.OAuthClientJsonPath) || !File.Exists(settings.OAuthClientJsonPath))
-            throw new InvalidOperationException("Không tìm thấy file OAuth Client JSON đã cấu hình.");
+            throw new InvalidOperationException("Chưa kết nối tài khoản Google trên laptop này.");
 
-        var client = LoadClient(settings.OAuthClientJsonPath);
         using var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["client_id"] = client.ClientId,
-            ["client_secret"] = client.ClientSecret,
+            ["client_id"] = CloudConfig.GoogleOAuthClientId,
             ["refresh_token"] = settings.RefreshToken,
             ["grant_type"] = "refresh_token"
         });
-        using var response = await Http.PostAsync(client.TokenUri, form);
+        using var response = await Http.PostAsync(TokenUri, form);
         var json = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Không refresh được Google token: {json}");
 
@@ -185,59 +226,37 @@ internal static class GoogleService
         settings.AccessToken = root.GetProperty("access_token").GetString() ?? string.Empty;
         var expires = root.TryGetProperty("expires_in", out var exp) ? exp.GetInt32() : 3600;
         settings.AccessTokenExpiresUtc = DateTime.UtcNow.AddSeconds(Math.Max(60, expires - 30));
+        BindFixedResourceIds(settings);
         SettingsStore.Save(settings);
     }
 
-    private static async Task<string> EnsureFolderAsync(GoogleSettings settings, string name, string? parentId, string knownId)
+    private static async Task ValidateDriveResourceAsync(
+        GoogleSettings settings,
+        string fileId,
+        string expectedMimeType,
+        string? expectedParentId,
+        string label)
     {
-        if (!string.IsNullOrWhiteSpace(knownId) && await DriveFileExistsAsync(settings, knownId)) return knownId;
-        var found = await FindDriveFileAsync(settings, name, "application/vnd.google-apps.folder", parentId);
-        if (!string.IsNullOrWhiteSpace(found)) return found;
-        return await CreateDriveItemAsync(settings, name, "application/vnd.google-apps.folder", parentId);
-    }
-
-    private static async Task<string> EnsureSpreadsheetAsync(GoogleSettings settings, string parentId, string knownId)
-    {
-        if (!string.IsNullOrWhiteSpace(knownId) && await DriveFileExistsAsync(settings, knownId)) return knownId;
-        const string name = "Cập nhật thông tin hư hỏng pickface 1291";
-        var found = await FindDriveFileAsync(settings, name, "application/vnd.google-apps.spreadsheet", parentId);
-        if (!string.IsNullOrWhiteSpace(found)) return found;
-        return await CreateDriveItemAsync(settings, name, "application/vnd.google-apps.spreadsheet", parentId);
-    }
-
-    private static async Task<bool> DriveFileExistsAsync(GoogleSettings settings, string fileId)
-    {
-        using var req = CreateRequest(settings, HttpMethod.Get, $"https://www.googleapis.com/drive/v3/files/{Esc(fileId)}?fields=id&supportsAllDrives=true");
-        using var res = await Http.SendAsync(req);
-        return res.IsSuccessStatusCode;
-    }
-
-    private static async Task<string?> FindDriveFileAsync(GoogleSettings settings, string name, string mimeType, string? parentId)
-    {
-        var safeName = name.Replace("'", "\\'");
-        var q = $"name='{safeName}' and mimeType='{mimeType}' and trashed=false";
-        if (!string.IsNullOrWhiteSpace(parentId)) q += $" and '{parentId}' in parents";
-        var url = $"https://www.googleapis.com/drive/v3/files?q={Esc(q)}&fields=files(id,name)&pageSize=10";
+        var url = $"https://www.googleapis.com/drive/v3/files/{Esc(fileId)}?supportsAllDrives=true&fields=id,name,mimeType,parents";
         using var req = CreateRequest(settings, HttpMethod.Get, url);
         using var res = await Http.SendAsync(req);
         var text = await res.Content.ReadAsStringAsync();
-        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Lỗi tìm file Drive: {text}");
-        using var doc = JsonDocument.Parse(text);
-        var files = doc.RootElement.GetProperty("files");
-        return files.GetArrayLength() > 0 ? files[0].GetProperty("id").GetString() : null;
-    }
+        if (!res.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Không truy cập được {label}. Ứng dụng sẽ không tự tìm hoặc tạo tài nguyên ở nơi khác. Chi tiết: {text}");
 
-    private static async Task<string> CreateDriveItemAsync(GoogleSettings settings, string name, string mimeType, string? parentId)
-    {
-        var payload = new Dictionary<string, object?> { ["name"] = name, ["mimeType"] = mimeType };
-        if (!string.IsNullOrWhiteSpace(parentId)) payload["parents"] = new[] { parentId };
-        using var req = CreateRequest(settings, HttpMethod.Post, "https://www.googleapis.com/drive/v3/files?fields=id");
-        req.Content = JsonContent(payload);
-        using var res = await Http.SendAsync(req);
-        var text = await res.Content.ReadAsStringAsync();
-        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Lỗi tạo file/folder Drive: {text}");
         using var doc = JsonDocument.Parse(text);
-        return doc.RootElement.GetProperty("id").GetString() ?? throw new InvalidOperationException("Drive không trả file ID.");
+        var root = doc.RootElement;
+        var mime = root.TryGetProperty("mimeType", out var mimeNode) ? mimeNode.GetString() : null;
+        if (!string.Equals(mime, expectedMimeType, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Tài nguyên {label} không đúng loại dữ liệu mong đợi.");
+
+        if (!string.IsNullOrWhiteSpace(expectedParentId))
+        {
+            var inApprovedRoot = root.TryGetProperty("parents", out var parents) &&
+                                 parents.EnumerateArray().Any(x => string.Equals(x.GetString(), expectedParentId, StringComparison.Ordinal));
+            if (!inApprovedRoot)
+                throw new InvalidOperationException($"Tài nguyên {label} không nằm trực tiếp trong Drive root được OWNER cho phép. Dừng đồng bộ để đảm bảo scope.");
+        }
     }
 
     private static async Task WriteHeadersAsync(GoogleSettings settings)
@@ -253,7 +272,7 @@ internal static class GoogleService
         req.Content = JsonContent(new { values = new[] { headers } });
         using var res = await Http.SendAsync(req);
         var text = await res.Content.ReadAsStringAsync();
-        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Lỗi tạo tiêu đề Google Sheet: {text}");
+        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Lỗi cập nhật tiêu đề Google Sheet: {text}");
     }
 
     private static async Task<(string Id, string WebViewLink)> UploadImageAsync(GoogleSettings settings, string path, string remoteName)
@@ -327,18 +346,6 @@ internal static class GoogleService
     private static StringContent JsonContent(object value) =>
         new(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");
 
-    private static OAuthClient LoadClient(string path)
-    {
-        using var doc = JsonDocument.Parse(File.ReadAllText(path));
-        if (!doc.RootElement.TryGetProperty("installed", out var node))
-            throw new InvalidDataException("OAuth JSON không phải loại Desktop app (installed).");
-        return new OAuthClient(
-            node.GetProperty("client_id").GetString() ?? throw new InvalidDataException("Thiếu client_id."),
-            node.TryGetProperty("client_secret", out var secret) ? secret.GetString() ?? string.Empty : string.Empty,
-            node.TryGetProperty("auth_uri", out var auth) ? auth.GetString() ?? DefaultAuthUri : DefaultAuthUri,
-            node.TryGetProperty("token_uri", out var token) ? token.GetString() ?? DefaultTokenUri : DefaultTokenUri);
-    }
-
     private static Dictionary<string, string> ParseQuery(string query)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -357,7 +364,7 @@ internal static class GoogleService
         var shift = SafeSegment(report.Shift.Replace(' ', '-'));
         var name = SafeSegment(report.ProductName);
         var location = SafeSegment(report.Location);
-        var qty = SafeSegment(report.Quantity.ToString("0.###"));
+        var qty = SafeSegment(report.Quantity.ToString("0"));
         var ext = string.IsNullOrWhiteSpace(extension) ? ".jpg" : extension.ToLowerInvariant();
         return $"{report.OccurredDate:yyyy-MM-dd}_{report.Hour:00}-{report.Minute:00}_{shift}_{SafeSegment(report.Sku)}_{name}_{location}_SL-{qty}_{sequence:00}{ext}";
     }
@@ -380,5 +387,11 @@ internal static class GoogleService
 
     private static string Esc(string value) => Uri.EscapeDataString(value);
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-    private sealed record OAuthClient(string ClientId, string ClientSecret, string AuthUri, string TokenUri);
+
+    private static bool FixedEquals(string a, string b)
+    {
+        var aa = Encoding.UTF8.GetBytes(a);
+        var bb = Encoding.UTF8.GetBytes(b);
+        return aa.Length == bb.Length && CryptographicOperations.FixedTimeEquals(aa, bb);
+    }
 }
