@@ -17,11 +17,11 @@ internal static class ExcelImportService
         var source = FindSourceSheet(workbook)
             ?? throw new InvalidDataException("Không tìm thấy đủ 3 cột bắt buộc: SKU, Tên sản phẩm, Base Units.");
 
-        var ws = source.Value.Sheet;
-        var headerRow = source.Value.HeaderRow;
-        var skuCol = source.Value.SkuCol;
-        var nameCol = source.Value.NameCol;
-        var baseCol = source.Value.BaseCol;
+        var ws = source.Sheet;
+        var headerRow = source.HeaderRow;
+        var skuCol = source.SkuCol;
+        var nameCol = source.NameCol;
+        var baseCol = source.BaseCol;
         var lastRow = ws.LastRowUsed()?.RowNumber() ?? headerRow;
 
         var bySku = new Dictionary<string, ProductCandidate>(StringComparer.OrdinalIgnoreCase);
