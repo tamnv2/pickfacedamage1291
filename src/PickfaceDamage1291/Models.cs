@@ -48,7 +48,11 @@ internal sealed record DamageReport(
     DateTime CreatedAt,
     string SyncStatus,
     DateTime? SyncedAt,
-    string? LastError);
+    string? LastError,
+    string CreatedBy = "",
+    int Version = 1,
+    DateTime? UpdatedAt = null,
+    string? UpdatedBy = null);
 
 internal sealed record DamageImage(
     string ReportId,
@@ -70,6 +74,9 @@ internal sealed class GoogleSettings
     public string AccessToken { get; set; } = string.Empty;
     public string RefreshToken { get; set; } = string.Empty;
     public DateTime AccessTokenExpiresUtc { get; set; } = DateTime.MinValue;
+    public string OAuthClientIdAtGrant { get; set; } = string.Empty;
 
+    // LastShift is retained to migrate existing installations. New builds remember shift per UID.
     public string LastShift { get; set; } = "Ca 1";
+    public Dictionary<string, string> LastShiftByUser { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
