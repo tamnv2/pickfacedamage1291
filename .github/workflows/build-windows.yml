@@ -1,0 +1,65 @@
+name: Build Windows Portable
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj
+
+      - name: Publish portable EXE
+        run: >-
+          dotnet publish src/PickfaceDamage1291/PickfaceDamage1291.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -o publish/win-x64
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+
+      - name: Verify EXE
+        shell: pwsh
+        run: |
+          if (!(Test-Path "publish/win-x64/PickfaceDamage1291.exe")) {
+            throw "Không tìm thấy PickfaceDamage1291.exe sau publish"
+          }
+          Get-Item "publish/win-x64/PickfaceDamage1291.exe" | Format-List Name,Length,LastWriteTime
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PickfaceDamage1291-win-x64
+          path: publish/win-x64/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Package release ZIP
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: Compress-Archive -Path publish/win-x64/* -DestinationPath PickfaceDamage1291-${{ github.ref_name }}-win-x64.zip -Force
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "PickfaceDamage1291-${{ github.ref_name }}-win-x64.zip" --generate-notes
