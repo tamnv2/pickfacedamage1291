@@ -5,7 +5,7 @@ namespace PickfaceDamage1291;
 
 internal static partial class LocationNormalizer
 {
-    [GeneratedRegex(@"(?<!\d)(\d{1,2})\s*\.\s*(\d{1,2})(?:\s*\.\s*(\d{1,2}))?(?!\d)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<![\d.])(\d{1,2})\s*\.\s*(\d{1,2})(?:\s*\.\s*(\d{1,2}))?(?!\s*\.)(?!\d)", RegexOptions.CultureInvariant)]
     private static partial Regex PositionRegex();
 
     public static bool TryNormalize(string? raw, out string normalized, out string error)
@@ -70,7 +70,6 @@ internal sealed class ExclusiveShiftPicker : UserControl
     private bool _changing;
 
     public event EventHandler? SelectedShiftChanged;
-
     public string SelectedShift => _ca2.Checked ? "Ca 2" : _ca1.Checked ? "Ca 1" : string.Empty;
 
     public ExclusiveShiftPicker()
@@ -106,14 +105,8 @@ internal sealed class ExclusiveShiftPicker : UserControl
     {
         if (_changing) return;
         _changing = true;
-        if (source.Checked)
-        {
-            other.Checked = false;
-        }
-        else if (!other.Checked)
-        {
-            source.Checked = true;
-        }
+        if (source.Checked) other.Checked = false;
+        else if (!other.Checked) source.Checked = true;
         _changing = false;
         SelectedShiftChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -220,5 +213,23 @@ internal sealed class TimeWheelDialog : Form
         list.Font = new Font("Segoe UI", 16F);
         list.ItemHeight = 38;
         list.Items.AddRange(values.Cast<object>().ToArray());
+        list.MouseWheel += (_, e) => MoveCircular(list, e.Delta > 0 ? -1 : 1, e);
+        list.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode is not (Keys.Up or Keys.Down)) return;
+            MoveCircular(list, e.KeyCode == Keys.Up ? -1 : 1, null);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        };
+    }
+
+    private static void MoveCircular(ListBox list, int delta, MouseEventArgs? mouse)
+    {
+        if (list.Items.Count == 0) return;
+        var current = Math.Max(0, list.SelectedIndex);
+        var next = (current + delta + list.Items.Count) % list.Items.Count;
+        list.SelectedIndex = next;
+        list.TopIndex = Math.Max(0, next - 4);
+        if (mouse is HandledMouseEventArgs handled) handled.Handled = true;
     }
 }
