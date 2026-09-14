@@ -34,9 +34,9 @@ internal static class Program
         var manager = AppSession.OperatorManager;
         try
         {
-            if (manager is not null)
+            if (manager is not null && session?.OfflineMode != true)
                 manager.ReleaseAsync(normalLogout: true).GetAwaiter().GetResult();
-            else if (session is not null && !session.OfflineMode)
+            else if (manager is null && session is not null && !session.OfflineMode)
                 FirebaseClient.AppendAuditAsync(session, "LOGOUT", new { reason = "APP_CLOSED" }).GetAwaiter().GetResult();
         }
         catch
