@@ -7,6 +7,7 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
         AppPaths.EnsureCreated();
+        AppPaths.BackupDatabase();
         Database.Initialize();
         Application.Run(new MainForm());
     }
