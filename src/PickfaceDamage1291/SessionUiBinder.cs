@@ -275,7 +275,7 @@ internal sealed class MyAccountControl : UserControl
         Controls.Add(box);
     }
 
-    private static void AddRow(TableLayoutPanel form, string label, Control control, int row)
+    private static void AddRow(TableLayoutPanel form, string label, TextBox control, int row)
     {
         form.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
         form.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, 0, row);
