@@ -1,0 +1,68 @@
+name: Release Windows Portable
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag, ví dụ v1.0.1'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Validate version input
+        shell: pwsh
+        run: |
+          if ('${{ inputs.version }}' -notmatch '^v\d+\.\d+\.\d+$') {
+            throw 'Version phải có dạng v1.0.1'
+          }
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj
+
+      - name: Publish Windows x64
+        shell: pwsh
+        run: |
+          $version = '${{ inputs.version }}'.TrimStart('v')
+          dotnet publish src/PickfaceDamage1291/PickfaceDamage1291.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -o publish/win-x64 `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -p:Version=$version `
+            -p:AssemblyVersion="$version.0" `
+            -p:FileVersion="$version.0"
+
+      - name: Verify EXE
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'publish/win-x64/PickfaceDamage1291.exe')) {
+            throw 'Không tìm thấy PickfaceDamage1291.exe sau publish'
+          }
+
+      - name: Package release ZIP
+        shell: pwsh
+        run: Compress-Archive -Path publish/win-x64/* -DestinationPath "PickfaceDamage1291-${{ inputs.version }}-win-x64.zip" -Force
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ inputs.version }}" "PickfaceDamage1291-${{ inputs.version }}-win-x64.zip" --target "$env:GITHUB_SHA" --generate-notes
