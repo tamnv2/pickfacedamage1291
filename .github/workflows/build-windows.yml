@@ -2,7 +2,7 @@ name: Build Windows Portable
 
 on:
   push:
-    branches: [main, feature/v1.2-fixes-ui-edit]
+    branches: [main]
     paths:
       - 'src/**'
       - '.github/workflows/build-windows.yml'
