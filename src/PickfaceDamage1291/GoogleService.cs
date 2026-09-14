@@ -117,7 +117,7 @@ internal static class GoogleService
             // Validate the long-lived token immediately so a bad/mismatched OAuth client is
             // discovered during setup rather than when a warehouse report is being sent.
             await RefreshAccessTokenAsync(settings, force: true);
-            await VerifyBindingAsync();
+            await VerifyBindingAsync(writeHeaders: true);
         }
         finally
         {
