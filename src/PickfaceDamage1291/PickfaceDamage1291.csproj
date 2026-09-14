@@ -16,7 +16,7 @@
     <FileVersion>1.2.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="MainForm.cs;MainFormV2.cs" />
+    <Compile Remove="MainForm.cs;MainFormV2.cs;AdminUsersControl.cs" />
     <PackageReference Include="ClosedXML" Version="0.102.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
