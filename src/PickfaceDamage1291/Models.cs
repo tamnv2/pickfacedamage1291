@@ -59,11 +59,17 @@ internal sealed record DamageImage(
 
 internal sealed class GoogleSettings
 {
+    // Kept only for backward compatibility with old local settings. New versions do not
+    // require selecting an OAuth JSON file.
     public string OAuthClientJsonPath { get; set; } = string.Empty;
-    public string RootFolderId { get; set; } = string.Empty;
-    public string ImageFolderId { get; set; } = string.Empty;
-    public string SpreadsheetId { get; set; } = string.Empty;
+
+    public string RootFolderId { get; set; } = CloudConfig.DriveRootFolderId;
+    public string ImageFolderId { get; set; } = CloudConfig.DriveImageFolderId;
+    public string SpreadsheetId { get; set; } = CloudConfig.DamageSpreadsheetId;
+
     public string AccessToken { get; set; } = string.Empty;
     public string RefreshToken { get; set; } = string.Empty;
     public DateTime AccessTokenExpiresUtc { get; set; } = DateTime.MinValue;
+
+    public string LastShift { get; set; } = "Ca 1";
 }
