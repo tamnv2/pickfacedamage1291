@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace PickfaceDamage1291;
 
@@ -20,9 +21,18 @@ internal static class GoogleService
     public static bool IsConnected()
     {
         var s = SettingsStore.Load();
+        if (!IsClientConfigured()) return false;
+        if (!string.Equals(s.OAuthClientIdAtGrant, CloudConfig.GoogleOAuthClientId, StringComparison.Ordinal)) return false;
+        return !string.IsNullOrWhiteSpace(s.RefreshToken) ||
+               (!string.IsNullOrWhiteSpace(s.AccessToken) && s.AccessTokenExpiresUtc > DateTime.UtcNow);
+    }
+
+    public static bool NeedsReconnect()
+    {
+        var s = SettingsStore.Load();
         return IsClientConfigured() &&
-               (!string.IsNullOrWhiteSpace(s.RefreshToken) ||
-                (!string.IsNullOrWhiteSpace(s.AccessToken) && s.AccessTokenExpiresUtc > DateTime.UtcNow));
+               (!string.IsNullOrWhiteSpace(s.RefreshToken) || !string.IsNullOrWhiteSpace(s.AccessToken)) &&
+               !string.Equals(s.OAuthClientIdAtGrant, CloudConfig.GoogleOAuthClientId, StringComparison.Ordinal);
     }
 
     public static async Task AuthorizeAsync()
@@ -85,20 +95,28 @@ internal static class GoogleService
             });
             using var response = await Http.PostAsync(TokenUri, form);
             var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Không lấy được Google token: {json}");
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException(ToFriendlyTokenError(json, "Không lấy được Google token."));
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
+            var refreshToken = root.TryGetProperty("refresh_token", out var refresh) ? refresh.GetString() ?? string.Empty : string.Empty;
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                throw new InvalidOperationException("Google không trả refresh token. Hãy thử Kết nối Google lại và chấp nhận quyền truy cập.");
+
             var settings = SettingsStore.Load();
             BindFixedResourceIds(settings);
             settings.OAuthClientJsonPath = string.Empty;
             settings.AccessToken = root.GetProperty("access_token").GetString() ?? string.Empty;
-            if (root.TryGetProperty("refresh_token", out var refresh))
-                settings.RefreshToken = refresh.GetString() ?? settings.RefreshToken;
+            settings.RefreshToken = refreshToken;
+            settings.OAuthClientIdAtGrant = CloudConfig.GoogleOAuthClientId;
             var expires = root.TryGetProperty("expires_in", out var exp) ? exp.GetInt32() : 3600;
             settings.AccessTokenExpiresUtc = DateTime.UtcNow.AddSeconds(Math.Max(60, expires - 30));
             SettingsStore.Save(settings);
 
+            // Validate the long-lived token immediately so a bad/mismatched OAuth client is
+            // discovered during setup rather than when a warehouse report is being sent.
+            await RefreshAccessTokenAsync(settings, force: true);
             await VerifyBindingAsync();
         }
         finally
@@ -107,11 +125,6 @@ internal static class GoogleService
         }
     }
 
-    /// <summary>
-    /// Compatibility name kept for the existing UI. This method never creates a parent
-    /// folder or searches outside the approved Drive root. It only verifies the three
-    /// fixed resources and refreshes the Sheet header.
-    /// </summary>
     public static async Task ProvisionAsync() => await VerifyBindingAsync(writeHeaders: true);
 
     public static async Task VerifyBindingAsync(bool writeHeaders = false)
@@ -120,26 +133,12 @@ internal static class GoogleService
         BindFixedResourceIds(settings);
         await EnsureAccessTokenAsync(settings);
 
-        await ValidateDriveResourceAsync(
-            settings,
-            CloudConfig.DriveRootFolderId,
-            "application/vnd.google-apps.folder",
-            expectedParentId: null,
-            "thư mục gốc CẬP NHẬT HƯ HỎNG PICKFACE");
-
-        await ValidateDriveResourceAsync(
-            settings,
-            CloudConfig.DriveImageFolderId,
-            "application/vnd.google-apps.folder",
-            CloudConfig.DriveRootFolderId,
-            "thư mục Ảnh hàng hư hỏng");
-
-        await ValidateDriveResourceAsync(
-            settings,
-            CloudConfig.DamageSpreadsheetId,
-            "application/vnd.google-apps.spreadsheet",
-            CloudConfig.DriveRootFolderId,
-            "Google Sheet dữ liệu hư hỏng");
+        await ValidateDriveResourceAsync(settings, CloudConfig.DriveRootFolderId,
+            "application/vnd.google-apps.folder", null, "thư mục gốc CẬP NHẬT HƯ HỎNG PICKFACE");
+        await ValidateDriveResourceAsync(settings, CloudConfig.DriveImageFolderId,
+            "application/vnd.google-apps.folder", CloudConfig.DriveRootFolderId, "thư mục Ảnh hàng hư hỏng");
+        await ValidateDriveResourceAsync(settings, CloudConfig.DamageSpreadsheetId,
+            "application/vnd.google-apps.spreadsheet", CloudConfig.DriveRootFolderId, "Google Sheet dữ liệu hư hỏng");
 
         if (writeHeaders) await WriteHeadersAsync(settings);
         SettingsStore.Save(settings);
@@ -148,28 +147,33 @@ internal static class GoogleService
     public static async Task SyncAllPendingAsync(IProgress<string>? progress = null)
     {
         var pending = Database.GetPendingReports();
+        if (pending.Count == 0) return;
+        var settings = SettingsStore.Load();
+        BindFixedResourceIds(settings);
+        await EnsureAccessTokenAsync(settings);
+        var rowMap = await GetReportRowMapAsync(settings);
+
         foreach (var report in pending)
         {
             progress?.Report($"Đồng bộ {report.Sku} - {report.ReportId[..8]}...");
-            await SyncReportAsync(report);
+            await SyncReportCoreAsync(settings, report, rowMap);
         }
     }
 
     public static async Task SyncReportAsync(DamageReport report)
     {
+        var settings = SettingsStore.Load();
+        BindFixedResourceIds(settings);
+        await EnsureAccessTokenAsync(settings);
+        var rowMap = await GetReportRowMapAsync(settings);
+        await SyncReportCoreAsync(settings, report, rowMap);
+    }
+
+    private static async Task SyncReportCoreAsync(GoogleSettings settings, DamageReport report, Dictionary<string, int> rowMap)
+    {
         try
         {
-            var settings = SettingsStore.Load();
-            BindFixedResourceIds(settings);
-            await EnsureAccessTokenAsync(settings);
             Database.SetReportStatus(report.ReportId, "SYNCING");
-
-            if (await ReportExistsAsync(settings, report.ReportId))
-            {
-                Database.SetReportStatus(report.ReportId, "SYNCED");
-                return;
-            }
-
             foreach (var image in Database.GetImages(report.ReportId))
             {
                 if (!string.IsNullOrWhiteSpace(image.DriveFileId)) continue;
@@ -181,10 +185,15 @@ internal static class GoogleService
                 Database.UpdateImageDrive(report.ReportId, image.Sequence, uploaded.Id, uploaded.WebViewLink);
             }
 
-            if (!await ReportExistsAsync(settings, report.ReportId))
+            var images = Database.GetImages(report.ReportId);
+            if (rowMap.TryGetValue(report.ReportId, out var row))
             {
-                var images = Database.GetImages(report.ReportId);
-                await AppendReportAsync(settings, report, images);
+                await UpdateReportRowAsync(settings, row, report, images);
+            }
+            else
+            {
+                var appendedRow = await AppendReportAsync(settings, report, images);
+                if (appendedRow > 0) rowMap[report.ReportId] = appendedRow;
             }
             Database.SetReportStatus(report.ReportId, "SYNCED");
         }
@@ -206,11 +215,21 @@ internal static class GoogleService
     {
         if (!IsClientConfigured())
             throw new InvalidOperationException("Google OAuth Client ID chưa được cấu hình trong bản build này.");
+        if (!string.Equals(settings.OAuthClientIdAtGrant, CloudConfig.GoogleOAuthClientId, StringComparison.Ordinal))
+        {
+            ClearGoogleTokens(settings);
+            throw new InvalidOperationException("Phiên Google cũ không khớp OAuth Desktop Client hiện tại. Vào Cài đặt → Kết nối Google và đăng nhập lại một lần.");
+        }
         if (!string.IsNullOrWhiteSpace(settings.AccessToken) && settings.AccessTokenExpiresUtc > DateTime.UtcNow.AddMinutes(2))
             return;
         if (string.IsNullOrWhiteSpace(settings.RefreshToken))
             throw new InvalidOperationException("Chưa kết nối tài khoản Google trên laptop này.");
+        await RefreshAccessTokenAsync(settings, force: false);
+    }
 
+    private static async Task RefreshAccessTokenAsync(GoogleSettings settings, bool force)
+    {
+        if (!force && !string.IsNullOrWhiteSpace(settings.AccessToken) && settings.AccessTokenExpiresUtc > DateTime.UtcNow.AddMinutes(2)) return;
         using var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["client_id"] = CloudConfig.GoogleOAuthClientId,
@@ -219,23 +238,53 @@ internal static class GoogleService
         });
         using var response = await Http.PostAsync(TokenUri, form);
         var json = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Không refresh được Google token: {json}");
+        if (!response.IsSuccessStatusCode)
+        {
+            if (json.Contains("client_secret is missing", StringComparison.OrdinalIgnoreCase) ||
+                json.Contains("invalid_client", StringComparison.OrdinalIgnoreCase) ||
+                json.Contains("unauthorized_client", StringComparison.OrdinalIgnoreCase))
+            {
+                ClearGoogleTokens(settings);
+                throw new InvalidOperationException("OAuth Google trên laptop không tương thích với Desktop Client hiện tại. Dữ liệu local vẫn an toàn. Vào Cài đặt → Kết nối Google để cấp quyền lại. Nếu vẫn lặp lại, cần kiểm tra Client trong Google Cloud có đúng loại Desktop app hay không.");
+            }
+            throw new InvalidOperationException(ToFriendlyTokenError(json, "Không refresh được Google token."));
+        }
 
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         settings.AccessToken = root.GetProperty("access_token").GetString() ?? string.Empty;
         var expires = root.TryGetProperty("expires_in", out var exp) ? exp.GetInt32() : 3600;
         settings.AccessTokenExpiresUtc = DateTime.UtcNow.AddSeconds(Math.Max(60, expires - 30));
+        settings.OAuthClientIdAtGrant = CloudConfig.GoogleOAuthClientId;
         BindFixedResourceIds(settings);
         SettingsStore.Save(settings);
     }
 
-    private static async Task ValidateDriveResourceAsync(
-        GoogleSettings settings,
-        string fileId,
-        string expectedMimeType,
-        string? expectedParentId,
-        string label)
+    private static void ClearGoogleTokens(GoogleSettings settings)
+    {
+        settings.AccessToken = string.Empty;
+        settings.RefreshToken = string.Empty;
+        settings.AccessTokenExpiresUtc = DateTime.MinValue;
+        settings.OAuthClientIdAtGrant = string.Empty;
+        SettingsStore.Save(settings);
+    }
+
+    private static string ToFriendlyTokenError(string json, string fallback)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var error = root.TryGetProperty("error", out var e) ? e.GetString() : null;
+            var description = root.TryGetProperty("error_description", out var d) ? d.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(description)) return $"{fallback} {description}";
+            if (!string.IsNullOrWhiteSpace(error)) return $"{fallback} {error}";
+        }
+        catch { }
+        return $"{fallback} {json}";
+    }
+
+    private static async Task ValidateDriveResourceAsync(GoogleSettings settings, string fileId, string expectedMimeType, string? expectedParentId, string label)
     {
         var url = $"https://www.googleapis.com/drive/v3/files/{Esc(fileId)}?supportsAllDrives=true&fields=id,name,mimeType,parents";
         using var req = CreateRequest(settings, HttpMethod.Get, url);
@@ -249,11 +298,9 @@ internal static class GoogleService
         var mime = root.TryGetProperty("mimeType", out var mimeNode) ? mimeNode.GetString() : null;
         if (!string.Equals(mime, expectedMimeType, StringComparison.Ordinal))
             throw new InvalidOperationException($"Tài nguyên {label} không đúng loại dữ liệu mong đợi.");
-
         if (!string.IsNullOrWhiteSpace(expectedParentId))
         {
-            var inApprovedRoot = root.TryGetProperty("parents", out var parents) &&
-                                 parents.EnumerateArray().Any(x => string.Equals(x.GetString(), expectedParentId, StringComparison.Ordinal));
+            var inApprovedRoot = root.TryGetProperty("parents", out var parents) && parents.EnumerateArray().Any(x => string.Equals(x.GetString(), expectedParentId, StringComparison.Ordinal));
             if (!inApprovedRoot)
                 throw new InvalidOperationException($"Tài nguyên {label} không nằm trực tiếp trong Drive root được OWNER cho phép. Dừng đồng bộ để đảm bảo scope.");
         }
@@ -265,9 +312,9 @@ internal static class GoogleService
         {
             "ID", "Ngày phát hiện", "Giờ phát hiện", "Ca", "SKU", "Tên sản phẩm", "Vị trí phát hiện",
             "Số lượng hư hỏng", "Base Units", "Ảnh 1", "Ảnh 2", "Ảnh 3", "Ảnh 4", "Ảnh 5",
-            "Thời gian nhập", "Thời gian đồng bộ"
+            "Thời gian nhập", "Thời gian đồng bộ", "Người tạo", "Phiên bản", "Cập nhật lúc", "Cập nhật bởi"
         };
-        var url = $"https://sheets.googleapis.com/v4/spreadsheets/{Esc(settings.SpreadsheetId)}/values/A1:P1?valueInputOption=RAW";
+        var url = $"https://sheets.googleapis.com/v4/spreadsheets/{Esc(settings.SpreadsheetId)}/values/A1:T1?valueInputOption=RAW";
         using var req = CreateRequest(settings, HttpMethod.Put, url);
         req.Content = JsonContent(new { values = new[] { headers } });
         using var res = await Http.SendAsync(req);
@@ -292,29 +339,35 @@ internal static class GoogleService
         using var doc = JsonDocument.Parse(text);
         var root = doc.RootElement;
         return (root.GetProperty("id").GetString() ?? string.Empty,
-                root.TryGetProperty("webViewLink", out var link) ? link.GetString() ?? string.Empty : string.Empty);
+            root.TryGetProperty("webViewLink", out var link) ? link.GetString() ?? string.Empty : string.Empty);
     }
 
-    private static async Task<bool> ReportExistsAsync(GoogleSettings settings, string reportId)
+    private static async Task<Dictionary<string, int>> GetReportRowMapAsync(GoogleSettings settings)
     {
         var url = $"https://sheets.googleapis.com/v4/spreadsheets/{Esc(settings.SpreadsheetId)}/values/A:A?majorDimension=COLUMNS";
         using var req = CreateRequest(settings, HttpMethod.Get, url);
         using var res = await Http.SendAsync(req);
         var text = await res.Content.ReadAsStringAsync();
-        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Lỗi kiểm tra Google Sheet: {text}");
+        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Lỗi tải chỉ mục Google Sheet: {text}");
         using var doc = JsonDocument.Parse(text);
-        if (!doc.RootElement.TryGetProperty("values", out var values) || values.GetArrayLength() == 0) return false;
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (!doc.RootElement.TryGetProperty("values", out var values) || values.GetArrayLength() == 0) return result;
+        var row = 1;
         foreach (var value in values[0].EnumerateArray())
-            if (string.Equals(value.GetString(), reportId, StringComparison.Ordinal)) return true;
-        return false;
+        {
+            var id = value.GetString();
+            if (!string.IsNullOrWhiteSpace(id) && row > 1) result[id] = row;
+            row++;
+        }
+        return result;
     }
 
-    private static async Task AppendReportAsync(GoogleSettings settings, DamageReport report, IReadOnlyList<DamageImage> images)
+    private static object[] BuildRowValues(DamageReport report, IReadOnlyList<DamageImage> images)
     {
         var links = new string[5];
         foreach (var image in images.Where(x => x.Sequence is >= 1 and <= 5)) links[image.Sequence - 1] = image.DriveLink ?? string.Empty;
-        var values = new object[]
-        {
+        return
+        [
             report.ReportId,
             report.OccurredDate.ToString("dd/MM/yyyy"),
             $"{report.Hour:00}:{report.Minute:00}",
@@ -322,18 +375,44 @@ internal static class GoogleService
             report.Sku,
             report.ProductName,
             report.Location,
-            report.Quantity,
+            decimal.Truncate(report.Quantity),
             report.BaseUnit,
             links[0], links[1], links[2], links[3], links[4],
             report.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss"),
-            DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss")
-        };
-        var url = $"https://sheets.googleapis.com/v4/spreadsheets/{Esc(settings.SpreadsheetId)}/values/A:P:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS";
+            DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss"),
+            report.CreatedBy,
+            Math.Max(1, report.Version),
+            report.UpdatedAt?.ToString("dd/MM/yyyy HH:mm:ss") ?? string.Empty,
+            report.UpdatedBy ?? string.Empty
+        ];
+    }
+
+    private static async Task<int> AppendReportAsync(GoogleSettings settings, DamageReport report, IReadOnlyList<DamageImage> images)
+    {
+        var url = $"https://sheets.googleapis.com/v4/spreadsheets/{Esc(settings.SpreadsheetId)}/values/A:T:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS";
         using var req = CreateRequest(settings, HttpMethod.Post, url);
-        req.Content = JsonContent(new { values = new[] { values } });
+        req.Content = JsonContent(new { values = new[] { BuildRowValues(report, images) } });
         using var res = await Http.SendAsync(req);
         var text = await res.Content.ReadAsStringAsync();
         if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Lỗi ghi Google Sheet: {text}");
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            var range = doc.RootElement.GetProperty("updates").GetProperty("updatedRange").GetString() ?? string.Empty;
+            var match = Regex.Match(range, @"![A-Z]+(\d+):");
+            return match.Success && int.TryParse(match.Groups[1].Value, out var row) ? row : 0;
+        }
+        catch { return 0; }
+    }
+
+    private static async Task UpdateReportRowAsync(GoogleSettings settings, int row, DamageReport report, IReadOnlyList<DamageImage> images)
+    {
+        var url = $"https://sheets.googleapis.com/v4/spreadsheets/{Esc(settings.SpreadsheetId)}/values/A{row}:T{row}?valueInputOption=USER_ENTERED";
+        using var req = CreateRequest(settings, HttpMethod.Put, url);
+        req.Content = JsonContent(new { values = new[] { BuildRowValues(report, images) } });
+        using var res = await Http.SendAsync(req);
+        var text = await res.Content.ReadAsStringAsync();
+        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Lỗi cập nhật Google Sheet: {text}");
     }
 
     private static HttpRequestMessage CreateRequest(GoogleSettings settings, HttpMethod method, string url)
@@ -343,8 +422,7 @@ internal static class GoogleService
         return req;
     }
 
-    private static StringContent JsonContent(object value) =>
-        new(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");
+    private static StringContent JsonContent(object value) => new(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");
 
     private static Dictionary<string, string> ParseQuery(string query)
     {
@@ -364,7 +442,7 @@ internal static class GoogleService
         var shift = SafeSegment(report.Shift.Replace(' ', '-'));
         var name = SafeSegment(report.ProductName);
         var location = SafeSegment(report.Location);
-        var qty = SafeSegment(report.Quantity.ToString("0"));
+        var qty = SafeSegment(decimal.Truncate(report.Quantity).ToString("0"));
         var ext = string.IsNullOrWhiteSpace(extension) ? ".jpg" : extension.ToLowerInvariant();
         return $"{report.OccurredDate:yyyy-MM-dd}_{report.Hour:00}-{report.Minute:00}_{shift}_{SafeSegment(report.Sku)}_{name}_{location}_SL-{qty}_{sequence:00}{ext}";
     }
