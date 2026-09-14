@@ -1,0 +1,38 @@
+# Build
+**/bin/
+**/obj/
+artifacts/
+publish/
+*.user
+*.suo
+.vs/
+
+# Local database / runtime data
+*.db
+*.db-shm
+*.db-wal
+local-data/
+data/
+backup/
+logs/
+images/
+
+# Google OAuth / tokens - NEVER COMMIT
+client_secret*.json
+credentials*.json
+oauth*.json
+token*.json
+*.token
+
+# Secrets / signing
+.env
+.env.*
+*.pfx
+*.p12
+*.key
+*.pem
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
