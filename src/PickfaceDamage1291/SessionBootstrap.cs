@@ -36,11 +36,10 @@ internal static class SessionBootstrap
         try
         {
             await FirebaseClient.AppendAuditAsync(session, "LOGIN_SUCCESS", new { role = profile.Role }, manager?.SessionId, ct);
-            await FirebaseClient.FlushAuditOutboxAsync(session, ct);
         }
         catch
         {
-            // Audit is durable through the local outbox and must not block login.
+            // Audit failure must not block login.
         }
         return true;
     }
