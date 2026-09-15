@@ -23,7 +23,7 @@ jobs:
     env:
       CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
       APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
-      APPS_SCRIPT_DEPLOYMENT_ID: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
+      APPS_SCRIPT_DEPLOYMENT_ID: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID || vars.APPS_SCRIPT_DEPLOYMENT_ID }}
 
     steps:
       - name: Checkout
