@@ -19,20 +19,21 @@ internal static class NetworkHttpClientFactory
 
     public static HttpClient Create(TimeSpan timeout, string userAgent)
     {
-        var proxy = WebRequest.DefaultWebProxy;
-        if (proxy is not null)
-            proxy.Credentials = CredentialCache.DefaultCredentials;
-
-        // SocketsHttpHandler keeps HttpClient reuse fast, while short connection lifetimes
-        // prevent a laptop from being pinned to stale DNS/proxy/TCP state after Wi-Fi/LAN changes.
+        // Resolve the Windows proxy dynamically for every new connection instead of pinning
+        // the proxy object that existed when the app started. This matters when a laptop moves
+        // between home/mobile Internet and an internal corporate LAN/PAC configuration.
         var handler = new SocketsHttpHandler
         {
             UseProxy = true,
-            Proxy = proxy,
+            Proxy = new RefreshingSystemProxy(),
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
-            PooledConnectionLifetime = TimeSpan.FromSeconds(30),
-            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(10),
-            ConnectTimeout = TimeSpan.FromSeconds(15)
+
+            // Force stale DNS/TCP/proxy routes to age out quickly after a Wi-Fi/LAN switch.
+            // The app has low request volume, so the extra TLS handshakes are a better tradeoff
+            // than allowing a dead pooled route to freeze business operations for minutes.
+            PooledConnectionLifetime = TimeSpan.FromSeconds(5),
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(5),
+            ConnectTimeout = TimeSpan.FromSeconds(12)
         };
 
         var client = new HttpClient(handler, disposeHandler: true) { Timeout = timeout };
@@ -111,5 +112,26 @@ internal static class NetworkHttpClientFactory
         for (Exception? current = ex; current is not null; current = current.InnerException)
             if (current is T typed) return typed;
         return null;
+    }
+
+    private sealed class RefreshingSystemProxy : IWebProxy
+    {
+        public ICredentials? Credentials { get; set; } = CredentialCache.DefaultCredentials;
+
+        public Uri GetProxy(Uri destination)
+        {
+            var proxy = WebRequest.DefaultWebProxy;
+            if (proxy is null) return destination;
+            proxy.Credentials = Credentials;
+            return proxy.GetProxy(destination) ?? destination;
+        }
+
+        public bool IsBypassed(Uri host)
+        {
+            var proxy = WebRequest.DefaultWebProxy;
+            if (proxy is null) return true;
+            proxy.Credentials = Credentials;
+            return proxy.IsBypassed(host);
+        }
     }
 }
