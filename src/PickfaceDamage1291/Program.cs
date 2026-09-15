@@ -43,7 +43,7 @@ internal static class Program
             Application.Run(main);
 
             var logoutRequested = V130Runtime.ConsumeLogoutRequested();
-            CleanupSession(main);
+            CleanupSession(main, logoutRequested ? "USER_LOGOUT" : "APP_CLOSED");
 
             if (logoutRequested)
             {
@@ -57,7 +57,7 @@ internal static class Program
         }
     }
 
-    private static void CleanupSession(MainForm main)
+    private static void CleanupSession(MainForm main, string reason)
     {
         var session = AppSession.Current;
         var manager = AppSession.OperatorManager;
@@ -65,8 +65,9 @@ internal static class Program
         {
             if (manager is not null && session?.OfflineMode != true)
                 manager.ReleaseAsync(normalLogout: true).GetAwaiter().GetResult();
-            else if (manager is null && session is not null && !session.OfflineMode)
-                FirebaseClient.AppendAuditAsync(session, "LOGOUT", new { reason = "APP_CLOSED" }).GetAwaiter().GetResult();
+
+            if (session is not null)
+                FirebaseClient.AppendAuditAsync(session, "LOGOUT", new { reason }).GetAwaiter().GetResult();
         }
         catch
         {
