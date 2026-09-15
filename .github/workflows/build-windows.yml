@@ -2,9 +2,12 @@ name: Build Windows Portable
 
 on:
   push:
-    branches:
-      - main
-      - 'fix/**'
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [main]
     paths:
       - 'src/**'
       - '.github/workflows/build-windows.yml'
@@ -43,7 +46,6 @@ jobs:
       - name: Verify EXE
         shell: pwsh
         run: |
-          # This check intentionally validates the complete branch head, not only the workflow change.
           if (!(Test-Path "publish/win-x64/PickfaceDamage1291.exe")) {
             throw "Không tìm thấy PickfaceDamage1291.exe sau publish"
           }
