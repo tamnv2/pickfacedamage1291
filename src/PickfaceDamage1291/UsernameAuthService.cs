@@ -40,7 +40,8 @@ internal static class UsernameAuthService
             AppLog.Info("OFFICE_LOGIN_PROFILE_FALLBACK_OK", "Đăng nhập đã đọc hồ sơ qua Google Gateway do mạng hiện tại không truy cập được Firebase RTDB trực tiếp.");
         }
 
-        profile ??= throw new InvalidOperationException("Tài khoản chưa được cấp hồ sơ sử dụng ứng dụng. Liên hệ ADMIN.");
+        if (profile is null)
+            throw new InvalidOperationException("Tài khoản chưa được cấp hồ sơ sử dụng ứng dụng. Liên hệ ADMIN.");
         if (!profile.Active) throw new InvalidOperationException("Tài khoản đã bị khóa hoặc ngừng hoạt động.");
         if (!string.Equals(profile.Username, username.Trim(), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Tên tài khoản không khớp hồ sơ Firebase.");
