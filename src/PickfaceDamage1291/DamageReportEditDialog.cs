@@ -51,6 +51,7 @@ internal sealed class DamageReportEditDialog : Form
         root.Controls.Add(BuildActions(), 0, 3);
         scroll.Controls.Add(root);
         Controls.Add(scroll);
+        AppUiStyle.StyleAllButtons(this);
 
         LoadValues();
         FormClosed += (_, _) => CleanupCanceledCopies();
@@ -62,6 +63,8 @@ internal sealed class DamageReportEditDialog : Form
         var form = FormTable();
 
         _sku.CharacterCasing = CharacterCasing.Upper;
+        EntryInputRules.AttachDigitsOnly(_sku);
+        EntryInputRules.AttachLocation(_location);
         _sku.Leave += (_, _) => LookupSku();
         _name.ReadOnly = true;
         _name.BackColor = Color.White;

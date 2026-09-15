@@ -17,6 +17,11 @@ internal static class UiRuntimeFixes
 
     public static void Attach(Form form)
     {
+        // State is per MainForm instance. Logging out and signing in again must rebuild the workspace.
+        _entryLayoutApplied = false;
+        _updateUi = null;
+        _updateCheckRunning = false;
+
         var tabs = FindAll<TabControl>(form).FirstOrDefault();
         if (tabs is not null)
         {
@@ -81,9 +86,10 @@ internal static class UiRuntimeFixes
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
             SplitterWidth = 7,
-            Panel1MinSize = 400,
-            Panel2MinSize = 480,
-            BackColor = SystemColors.ControlDark
+            Panel1MinSize = 0,
+            Panel2MinSize = 0,
+            BackColor = SystemColors.ControlDark,
+            Tag = "v133-entry-split"
         };
 
         var left = new FlowLayoutPanel
@@ -93,7 +99,8 @@ internal static class UiRuntimeFixes
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
             Padding = new Padding(14),
-            BackColor = Color.WhiteSmoke
+            BackColor = Color.WhiteSmoke,
+            Tag = "v133-entry-left"
         };
         product.Margin = new Padding(0, 0, 0, 14);
         occurrence.Margin = new Padding(0, 0, 0, 14);
@@ -109,21 +116,36 @@ internal static class UiRuntimeFixes
         split.Panel2.Controls.Add(images);
         tab.Controls.Add(split);
 
-        split.HandleCreated += (_, _) => SetInitialSplitter(split);
-        split.SizeChanged += (_, _) =>
-        {
-            if (split.Tag is null) SetInitialSplitter(split);
-        };
+        split.HandleCreated += (_, _) => ApplyStableEntrySplit(split);
+        split.SizeChanged += (_, _) => ApplyStableEntrySplit(split);
         _entryLayoutApplied = true;
     }
 
-    private static void SetInitialSplitter(SplitContainer split)
+    private static void ApplyStableEntrySplit(SplitContainer split)
     {
-        if (split.Width < 920) return;
-        var desired = (int)Math.Round(split.Width * 0.45);
-        desired = Math.Max(split.Panel1MinSize, Math.Min(desired, split.Width - split.Panel2MinSize - split.SplitterWidth));
-        if (desired > 0) split.SplitterDistance = desired;
-        split.Tag = "initialized";
+        if (split.IsDisposed || split.ClientSize.Width <= split.SplitterWidth + 240) return;
+        try
+        {
+            // Always keep information on the left and images on the right. Never switch to top/bottom.
+            split.Panel1MinSize = 0;
+            split.Panel2MinSize = 0;
+            if (split.Orientation != Orientation.Vertical) split.Orientation = Orientation.Vertical;
+
+            var available = Math.Max(1, split.ClientSize.Width - split.SplitterWidth);
+            var minimumPane = available >= 760 ? 320 : Math.Max(120, available / 3);
+            var preferred = (int)Math.Round(available * 0.45);
+            var desired = Math.Clamp(preferred, minimumPane, Math.Max(minimumPane, available - minimumPane));
+            if (desired > 0 && desired < available) split.SplitterDistance = desired;
+
+            var right = available - split.SplitterDistance;
+            split.Panel1MinSize = Math.Min(300, Math.Max(0, split.SplitterDistance));
+            split.Panel2MinSize = Math.Min(300, Math.Max(0, right));
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            split.Panel1MinSize = 0;
+            split.Panel2MinSize = 0;
+        }
     }
 
     private static void RebuildImageSection(GroupBox imageBox)
@@ -174,6 +196,8 @@ internal static class UiRuntimeFixes
     private static void Reflow(Form form)
     {
         if (form.IsDisposed) return;
+        foreach (var split in FindAll<SplitContainer>(form).Where(x => Equals(x.Tag, "v133-entry-split")))
+            ApplyStableEntrySplit(split);
         foreach (var flow in FindAll<FlowLayoutPanel>(form)
                      .Where(x => x.AutoScroll && x.FlowDirection == FlowDirection.TopDown && !x.WrapContents))
             FixVerticalStackWidth(flow);
@@ -183,15 +207,16 @@ internal static class UiRuntimeFixes
     {
         if (panel.IsDisposed) return;
         var width = panel.ClientSize.Width - panel.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 12;
-        if (width < 360) width = 360;
+        if (width < 220) return;
 
         panel.SuspendLayout();
         try
         {
             foreach (Control child in panel.Controls)
             {
-                child.MinimumSize = new Size(width, 0);
-                child.MaximumSize = new Size(width, 0);
+                // Do not pin MinimumSize/MaximumSize to stale values; that caused text to collapse after resize.
+                child.MinimumSize = Size.Empty;
+                child.MaximumSize = Size.Empty;
                 child.Width = width;
                 if (child is GroupBox box)
                 {
@@ -299,7 +324,7 @@ internal static class UiRuntimeFixes
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
-            RowCount = 4,
+            RowCount = 5,
             Padding = new Padding(12)
         };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
@@ -318,6 +343,12 @@ internal static class UiRuntimeFixes
         AddRow(table, "Phiên bản hiện tại", current);
         AddRow(table, "Trạng thái", status);
         AddRow(table, "File đang chạy", location);
+        AddRow(table, "Phát triển & duy trì", new Label
+        {
+            Text = "tamnv2 — Chuyên viên Pick Pack 1291",
+            AutoSize = true,
+            Padding = new Padding(0, 8, 0, 8)
+        });
         AddRow(table, "Thao tác", actions);
         group.Controls.Add(table);
 
