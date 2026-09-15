@@ -23,6 +23,8 @@ credentials*.json
 oauth*.json
 token*.json
 *.token
+.clasprc.json
+.clasp.json
 
 # Secrets / signing
 .env
