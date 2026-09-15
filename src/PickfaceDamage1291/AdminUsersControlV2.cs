@@ -101,6 +101,14 @@ internal sealed class AdminUsersControl : UserControl
         {
             UseWaitCursor = true;
             var created = await FirebaseClient.CreateUserAsync(session, dialog.Email, dialog.Username, dialog.DisplayNameValue, dialog.Permissions);
+            try
+            {
+                await UsernameAuthService.SyncAliasesAsync(session);
+            }
+            catch (Exception syncEx)
+            {
+                MessageBox.Show(this, "USER đã được tạo nhưng chưa đồng bộ được tên tài khoản sang Gateway đăng nhập.\n\n" + syncEx.Message, "Cần đồng bộ lại tài khoản", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
             MessageBox.Show(this, $"Đã tạo USER {created.Username}.\n\nFirebase đã gửi email đặt lại mật khẩu tới {created.Email}. Người dùng tự đặt mật khẩu; ADMIN không biết mật khẩu.", "Đã tạo tài khoản", MessageBoxButtons.OK, MessageBoxIcon.Information);
             await RefreshAsync();
         }
