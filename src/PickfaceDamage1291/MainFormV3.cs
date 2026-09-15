@@ -403,14 +403,8 @@ internal sealed class MainForm : Form
 
     private static void ResizeFlowChildren(FlowLayoutPanel panel)
     {
-        var width = Math.Max(260, panel.ClientSize.Width - panel.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 12);
-        var widthConstraint = new Size(width, 0);
-        foreach (Control child in panel.Controls)
-        {
-            child.MinimumSize = widthConstraint;
-            child.MaximumSize = widthConstraint;
-            child.Width = width;
-        }
+        var width = Math.Max(520, panel.ClientSize.Width - panel.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 12);
+        foreach (Control child in panel.Controls) child.Width = width;
     }
 
     private static void ConfigureGrid(DataGridView grid)
