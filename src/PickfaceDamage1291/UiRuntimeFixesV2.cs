@@ -183,12 +183,13 @@ internal static class UiRuntimeFixes
             RowCount = 3,
             Padding = new Padding(10)
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
 
-        actions.Dock = DockStyle.Fill;
-        actions.AutoSize = false;
+        actions.Dock = DockStyle.Top;
+        actions.AutoSize = true;
+        actions.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         actions.WrapContents = true;
         preview.Dock = DockStyle.Fill;
         preview.SizeMode = PictureBoxSizeMode.Zoom;

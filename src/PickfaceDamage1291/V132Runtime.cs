@@ -64,10 +64,13 @@ internal static class V132Runtime
         var rowSpan = parent.GetRowSpan(oldButton);
         var replacement = new Button
         {
-            Text = "GỬI THÔNG TIN HƯ HỎNG",
-            Height = Math.Max(42, oldButton.Height),
-            Dock = DockStyle.Top,
-            Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold),
+            Text = "Gửi thông tin hư hỏng",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(0, 40),
+            Dock = oldButton.Dock,
+            Anchor = oldButton.Anchor,
+            Padding = new Padding(14, 4, 14, 4),
             Margin = oldButton.Margin,
             Tag = "v132-submit"
         };
