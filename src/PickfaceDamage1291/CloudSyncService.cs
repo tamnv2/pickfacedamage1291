@@ -105,7 +105,10 @@ internal static class CloudSyncService
             try
             {
                 if (AppSession.Current is { } session)
+                {
+                    progress?.Report("Đang đồng bộ lịch sử thao tác lên Google...");
                     await FirebaseClient.FlushAuditOutboxAsync(session, ct);
+                }
             }
             catch (Exception ex)
             {
