@@ -34,7 +34,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Verify scope
+      - name: Verify project scope
         shell: bash
         run: |
           set -euo pipefail
@@ -43,36 +43,56 @@ jobs:
           grep -Fq "const GATEWAY_VERSION = '1.4.5'" apps-script/GoogleGateway/Code.gs
           grep -Fq "'rtdb_proxy'" apps-script/GoogleGateway/Code.gs
 
-      - name: Configure clasp
+      - name: Configure clasp safely
         shell: bash
         run: |
           set -euo pipefail
-
           test -n "${CLASPRC_JSON:-}"
           test -n "${APPS_SCRIPT_ID:-}"
           test -n "${APPS_SCRIPT_DEPLOYMENT_ID:-}"
 
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
-          chmod 600 "$HOME/.clasprc.json"
-
           node <<'NODE'
           const fs = require('fs');
+          const raw = (process.env.CLASPRC_JSON || '').trim();
+          const first = raw.indexOf('{');
+          const last = raw.lastIndexOf('}');
+          if (first < 0 || last <= first) {
+            console.error('CLASPRC_JSON không chứa JSON hợp lệ.');
+            process.exit(1);
+          }
+          const candidate = raw.slice(first, last + 1);
+          let parsed;
+          try {
+            parsed = JSON.parse(candidate);
+          } catch (_) {
+            console.error('CLASPRC_JSON vẫn không parse được sau khi loại phần thừa trước/sau JSON.');
+            process.exit(1);
+          }
+          fs.writeFileSync(`${process.env.HOME}/.clasprc.json`, JSON.stringify(parsed));
+          fs.chmodSync(`${process.env.HOME}/.clasprc.json`, 0o600);
           fs.writeFileSync('.clasp.json', JSON.stringify({
             scriptId: process.env.APPS_SCRIPT_ID.trim(),
             rootDir: 'apps-script/GoogleGateway'
           }, null, 2));
           NODE
 
+          RAW_DEPLOY="${APPS_SCRIPT_DEPLOYMENT_ID%%\?*}"
+          if [[ "$RAW_DEPLOY" == https://script.google.com/macros/s/* ]]; then
+            DEPLOYMENT_ID="${RAW_DEPLOY#https://script.google.com/macros/s/}"
+            DEPLOYMENT_ID="${DEPLOYMENT_ID%%/*}"
+          else
+            DEPLOYMENT_ID="$RAW_DEPLOY"
+          fi
+          test -n "$DEPLOYMENT_ID"
+          printf 'DEPLOYMENT_ID=%s\n' "$DEPLOYMENT_ID" >> "$GITHUB_ENV"
+          printf 'GATEWAY_URL=https://script.google.com/macros/s/%s/exec\n' "$DEPLOYMENT_ID" >> "$GITHUB_ENV"
+
       - name: Verify OAuth and deployment target
         shell: bash
         run: |
           set -euo pipefail
-
-          npx --yes @google/clasp@3 show-authorized-user --json >/dev/null
-
-          DEPLOYMENTS="$(npx --yes @google/clasp@3 list-deployments)"
-
-          if ! grep -Fq "$APPS_SCRIPT_DEPLOYMENT_ID" <<<"$DEPLOYMENTS"; then
+          DEPLOYMENTS="$(npx --yes @google/clasp@3 deployments)"
+          if ! grep -Fq "$DEPLOYMENT_ID" <<<"$DEPLOYMENTS"; then
             echo "::error::Deployment ID không thuộc Apps Script project đã cấu hình."
             exit 1
           fi
@@ -83,20 +103,45 @@ jobs:
           set -euo pipefail
           npx --yes @google/clasp@3 push --force
 
+      - name: Create immutable GAS version
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$(npx --yes @google/clasp@3 version "GitHub main ${GITHUB_SHA::7}")"
+          VERSION="$(sed -nE 's/.*[Vv]ersion[[:space:]]+([0-9]+).*/\1/p' <<<"$OUT" | tail -1)"
+          if [[ ! "$VERSION" =~ ^[0-9]+$ ]]; then
+            echo "::error::Không xác định được Apps Script version vừa tạo."
+            exit 1
+          fi
+          printf 'GAS_VERSION=%s\n' "$VERSION" >> "$GITHUB_ENV"
+
       - name: Redeploy existing web app
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes @google/clasp@3 create-deployment \
-            --deploymentId "$APPS_SCRIPT_DEPLOYMENT_ID" \
-            --description "GitHub main ${GITHUB_SHA::7}"
+          npx --yes @google/clasp@3 redeploy "$DEPLOYMENT_ID" "$GAS_VERSION" "GitHub main ${GITHUB_SHA::7}"
 
-      - name: Verify deployment still exists
+      - name: Verify deployment and live gateway
         shell: bash
         run: |
           set -euo pipefail
-          DEPLOYMENTS="$(npx --yes @google/clasp@3 list-deployments)"
-          grep -Fq "$APPS_SCRIPT_DEPLOYMENT_ID" <<<"$DEPLOYMENTS"
+          DEPLOYMENTS="$(npx --yes @google/clasp@3 deployments)"
+          grep -Fq "$DEPLOYMENT_ID" <<<"$DEPLOYMENTS"
+
+          RESPONSE="$(curl -fsSL --retry 3 --retry-delay 2 \
+            -H 'Content-Type: application/json' \
+            --data '{"action":"gateway_info","payload":{}}' \
+            "$GATEWAY_URL")"
+
+          RESPONSE="$RESPONSE" node <<'NODE'
+          const data = JSON.parse(process.env.RESPONSE || '{}');
+          if (data.ok !== true) throw new Error('Gateway live không trả ok=true.');
+          if (data.version !== '1.4.5') throw new Error(`Gateway live sai version: ${data.version || 'missing'}`);
+          if (!Array.isArray(data.capabilities) || !data.capabilities.includes('rtdb_proxy')) {
+            throw new Error('Gateway live chưa có capability rtdb_proxy.');
+          }
+          console.log('Gateway live PASS: version 1.4.5, rtdb_proxy available.');
+          NODE
 
       - name: Cleanup credentials
         if: always()
