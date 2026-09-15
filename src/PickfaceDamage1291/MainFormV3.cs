@@ -577,9 +577,7 @@ internal sealed class MainForm : Form
         {
             MessageBox.Show(
                 this,
-                "Toàn bộ thông tin và hình ảnh của phiếu này trùng hoàn toàn với một phiếu đã có. Hệ thống không tạo thêm bản ghi trùng.
-
-ID phiếu đã có: " + duplicateId,
+                "Toàn bộ thông tin và hình ảnh của phiếu này trùng hoàn toàn với một phiếu đã có. Hệ thống không tạo thêm bản ghi trùng.\n\nID phiếu đã có: " + duplicateId,
                 "Phát hiện phiếu trùng",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
@@ -778,9 +776,7 @@ ID phiếu đã có: " + duplicateId,
 
         var confirm = MessageBox.Show(
             this,
-            $"Xoá {reports.Count:N0} phiếu đã chọn khỏi danh sách?
-
-Google sẽ được ghi dấu đã xoá để dữ liệu không tự xuất hiện lại khi đồng bộ. Hành động này được ghi vào lịch sử.",
+            $"Xoá {reports.Count:N0} phiếu đã chọn khỏi danh sách?\n\nGoogle sẽ được ghi dấu đã xoá để dữ liệu không tự xuất hiện lại khi đồng bộ. Hành động này được ghi vào lịch sử.",
             "Xác nhận xoá phiếu",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -848,15 +844,11 @@ Google sẽ được ghi dấu đã xoá để dữ liệu không tự xuất hi
             return;
         }
 
-        var detail = string.Join("
-", failures.Take(8));
-        if (failures.Count > 8) detail += $"
-... và {failures.Count - 8:N0} phiếu khác.";
+        var detail = string.Join("\n", failures.Take(8));
+        if (failures.Count > 8) detail += $"\n... và {failures.Count - 8:N0} phiếu khác.";
         MessageBox.Show(
             this,
-            $"Đã xoá {deleted.Count:N0}/{reports.Count:N0} phiếu. Các phiếu lỗi vẫn được giữ nguyên để tránh mất dữ liệu không đồng bộ.
-
-{detail}",
+            $"Đã xoá {deleted.Count:N0}/{reports.Count:N0} phiếu. Các phiếu lỗi vẫn được giữ nguyên để tránh mất dữ liệu không đồng bộ.\n\n{detail}",
             "Xoá chưa hoàn tất",
             MessageBoxButtons.OK,
             MessageBoxIcon.Warning);
