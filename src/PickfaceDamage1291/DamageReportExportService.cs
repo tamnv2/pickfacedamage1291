@@ -69,7 +69,7 @@ internal static class DamageReportExportService
             ct.ThrowIfCancellationRequested();
             var report = reports[i];
             var row = i + 3;
-            progress?.Report($"Đang xuất {i + 1:N0}/{reports.Count:N0}: {report.Sku}");
+            progress?.Report($"Đang xuất {i + 1:N0}/{reports.Count:N0}: SKU {report.Sku}");
 
             ws.Row(row).Height = 150;
             ws.Cell(row, 1).Value = i + 1;
@@ -86,28 +86,61 @@ internal static class DamageReportExportService
             ws.Range(row, 1, row, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             ws.Range(row, 4, row, 8).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
 
-            var resolved = new List<string>();
-            foreach (var image in Database.GetImages(report.ReportId).OrderBy(x => x.Sequence).Take(5))
+            // Images are always resolved from this report_id only, then ordered by the stored
+            // sequence. A Drive image can therefore never be placed into another SKU's row.
+            var reportImages = Database.GetImages(report.ReportId)
+                .OrderBy(x => x.Sequence)
+                .Take(5)
+                .ToList();
+            var resolved = new List<string>(reportImages.Count);
+            for (var imageIndex = 0; imageIndex < reportImages.Count; imageIndex++)
             {
+                ct.ThrowIfCancellationRequested();
+                var image = reportImages[imageIndex];
                 var current = image;
                 if (!File.Exists(current.LocalPath) && !string.IsNullOrWhiteSpace(current.DriveFileId) && GoogleService.IsConnected())
                 {
-                    try { current = await RemoteImageCache.EnsureLocalAsync(current, ct); }
+                    try
+                    {
+                        progress?.Report($"Đang tải ảnh {imageIndex + 1:N0}/{reportImages.Count:N0} cho SKU {report.Sku}...");
+                        current = await RemoteImageCache.EnsureLocalAsync(current, ct);
+                    }
                     catch (Exception ex)
                     {
                         missingImages++;
-                        AppLog.Exception("EXPORT_IMAGE_DOWNLOAD_FAILED", ex, new Dictionary<string, object?> { ["report_id"] = report.ReportId, ["sequence"] = image.Sequence });
+                        AppLog.Exception("EXPORT_IMAGE_DOWNLOAD_FAILED", ex, new Dictionary<string, object?>
+                        {
+                            ["report_id"] = report.ReportId,
+                            ["sku"] = report.Sku,
+                            ["sequence"] = image.Sequence,
+                            ["drive_file_id"] = image.DriveFileId
+                        });
                         continue;
                     }
                 }
-                if (File.Exists(current.LocalPath)) resolved.Add(current.LocalPath);
-                else missingImages++;
+
+                if (File.Exists(current.LocalPath))
+                {
+                    resolved.Add(current.LocalPath);
+                    AppLog.Info("EXPORT_IMAGE_RESOLVED", "Đã ghép ảnh đúng phiếu để xuất Excel.", new Dictionary<string, object?>
+                    {
+                        ["report_id"] = report.ReportId,
+                        ["sku"] = report.Sku,
+                        ["sequence"] = image.Sequence,
+                        ["has_drive_file"] = !string.IsNullOrWhiteSpace(image.DriveFileId)
+                    });
+                }
+                else
+                {
+                    missingImages++;
+                }
             }
 
-            var added = AddPictures(ws, row, resolved);
+            progress?.Report($"Đang chèn ảnh vào Excel cho SKU {report.Sku}...");
+            var added = AddPictures(ws, row, resolved, report.ReportId, report.Sku);
             totalImages += added;
             missingImages += Math.Max(0, resolved.Count - added);
-            if (resolved.Count == 0 && Database.GetImages(report.ReportId).Count > 0)
+            if (resolved.Count == 0 && reportImages.Count > 0)
             {
                 ws.Cell(row, ImageColumn).Value = "Không tải được hình ảnh khi xuất.";
                 ws.Cell(row, ImageColumn).Style.Font.FontColor = XLColor.DarkRed;
@@ -150,7 +183,7 @@ internal static class DamageReportExportService
         ws.Style.Font.FontSize = 11;
     }
 
-    private static int AddPictures(IXLWorksheet ws, int row, IReadOnlyList<string> paths)
+    private static int AddPictures(IXLWorksheet ws, int row, IReadOnlyList<string> paths, string reportId, string sku)
     {
         var valid = paths.Take(5).Where(File.Exists).ToList();
         if (valid.Count == 0) return 0;
@@ -169,6 +202,11 @@ internal static class DamageReportExportService
                 scale = Math.Min(1d, Math.Max(0.02d, scale));
                 var width = Math.Max(1, (int)Math.Round(sourceW * scale));
                 var height = Math.Max(1, (int)Math.Round(sourceH * scale));
+
+                // ClosedXML 0.102 only allows resizing while the picture is FreeFloating/Move.
+                // v1.4.1 resized while the default placement was MoveAndSize, which is exactly
+                // the ArgumentException recorded in the OWNER log.
+                picture.WithPlacement(XLPicturePlacement.Move);
                 picture.WithSize(width, height);
                 var x = slot.X + Math.Max(0, (slot.Width - width) / 2);
                 var y = slot.Y + Math.Max(0, (slot.Height - height) / 2);
@@ -178,7 +216,13 @@ internal static class DamageReportExportService
             }
             catch (Exception ex)
             {
-                AppLog.Exception("EXPORT_IMAGE_EMBED_FAILED", ex, new Dictionary<string, object?> { ["extension"] = Path.GetExtension(valid[i]) });
+                AppLog.Exception("EXPORT_IMAGE_EMBED_FAILED", ex, new Dictionary<string, object?>
+                {
+                    ["report_id"] = reportId,
+                    ["sku"] = sku,
+                    ["image_index"] = i + 1,
+                    ["extension"] = Path.GetExtension(valid[i])
+                });
             }
         }
         return added;
