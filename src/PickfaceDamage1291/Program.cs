@@ -11,6 +11,9 @@ internal static class Program
         try
         {
             AppPaths.EnsureCreated();
+            AppLog.Initialize();
+            AttachUnhandledLogging();
+            AppLog.Info("APP_START", "Ứng dụng khởi động.");
         }
         catch (Exception ex)
         {
@@ -23,9 +26,11 @@ internal static class Program
         }
         AppPaths.BackupDatabase();
         Database.Initialize();
+        SyncCacheStore.Initialize();
 
         if (!FirebaseClient.IsConfigured)
         {
+            AppLog.Error("FIREBASE_CONFIG_MISSING", "Firebase client config chưa sẵn sàng.");
             MessageBox.Show(
                 "Firebase client config chưa sẵn sàng trong build này.",
                 "Thiếu cấu hình",
@@ -45,8 +50,21 @@ internal static class Program
                 {
                     using var login = new LoginFormV130();
                     if (login.ShowDialog() != DialogResult.OK || AppSession.Current is null)
+                    {
+                        AppLog.Info("APP_EXIT_LOGIN", "Ứng dụng đóng tại màn hình đăng nhập.");
                         return;
+                    }
                 }
+            }
+
+            if (AppSession.Current is { } active)
+            {
+                AppLog.Info("SESSION_ACTIVE", "Phiên ứng dụng đã sẵn sàng.", new Dictionary<string, object?>
+                {
+                    ["username"] = active.Profile.Username,
+                    ["role"] = active.Profile.Role,
+                    ["offline"] = active.OfflineMode
+                });
             }
 
             var main = new MainForm();
@@ -56,6 +74,7 @@ internal static class Program
             V132Runtime.Apply(main);
             UiRuntimeFixes.Attach(main);
             V133Runtime.Apply(main);
+            V140Runtime.Apply(main);
             Application.Run(main);
 
             var storageMoveTarget = V132Runtime.ConsumeStorageMoveTarget();
@@ -77,16 +96,35 @@ internal static class Program
 
             if (!LoginPreferencesStore.ShouldPersistSession)
                 SecureSessionStore.Clear();
+            AppLog.Info("APP_EXIT", "Ứng dụng đóng bình thường.");
             return;
         }
+    }
+
+    private static void AttachUnhandledLogging()
+    {
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => AppLog.Exception("UI_UNHANDLED_EXCEPTION", e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            if (e.ExceptionObject is Exception ex) AppLog.Exception("DOMAIN_UNHANDLED_EXCEPTION", ex);
+            else AppLog.Error("DOMAIN_UNHANDLED_EXCEPTION", Convert.ToString(e.ExceptionObject) ?? "Unknown unhandled exception");
+        };
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            AppLog.Exception("TASK_UNOBSERVED_EXCEPTION", e.Exception);
+            e.SetObserved();
+        };
     }
 
     private static void HandleStorageMoveAndRestart(string targetRoot)
     {
         var oldRoot = AppPaths.Root;
+        AppLog.Info("STORAGE_MOVE_START", "Bắt đầu chuyển nơi lưu dữ liệu local.");
         var result = LocalStorageManager.MoveTo(targetRoot);
         if (!result.Success)
         {
+            AppLog.Warning("STORAGE_MOVE_FAILED", result.Message);
             var open = System.Windows.Forms.MessageBox.Show(
                 result.Message + "\n\nMở thư mục dữ liệu hiện tại để tự xử lý thủ công?",
                 "Không thể chuyển nơi lưu trữ",
@@ -97,6 +135,7 @@ internal static class Program
         }
         else if (!string.IsNullOrWhiteSpace(result.Warning))
         {
+            AppLog.Warning("STORAGE_MOVE_WARNING", result.Warning);
             var open = System.Windows.Forms.MessageBox.Show(
                 result.Warning + "\n\nMở thư mục dữ liệu cũ để kiểm tra/xóa thủ công?",
                 "Đã chuyển dữ liệu",
@@ -123,12 +162,14 @@ internal static class Program
             if (session is not null)
                 FirebaseClient.AppendAuditAsync(session, "LOGOUT", new { reason }).GetAwaiter().GetResult();
         }
-        catch
+        catch (Exception ex)
         {
+            AppLog.Exception("SESSION_CLEANUP_WARNING", ex, new Dictionary<string, object?> { ["reason"] = reason });
             // Closing the app must not be blocked by a transient network failure.
         }
         finally
         {
+            AppLog.Info("SESSION_CLOSED", "Đã đóng phiên ứng dụng.", new Dictionary<string, object?> { ["reason"] = reason });
             if (manager is not null)
             {
                 try { manager.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
