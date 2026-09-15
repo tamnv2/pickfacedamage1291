@@ -1,6 +1,7 @@
 // Office-network fallback transport for active_operator only.
 // The desktop app uses this endpoint only after direct Firebase RTDB access fails.
 // Scope is deliberately fixed to /active_operator; arbitrary Firebase paths are not accepted.
+// Firebase Security Rules validate the ID token and remain the final authorization authority.
 
 function doGet(e) {
   try {
@@ -11,7 +12,7 @@ function doGet(e) {
 
     const idToken = String(p.id_token || '');
     const op = String(p.op || '').toLowerCase();
-    const auth = authenticateFirebase_(idToken);
+    if (!idToken) throw new Error('Thiếu phiên Firebase.');
 
     if (op === 'now') {
       return json_({ ok: true, server_now: Date.now() });
@@ -31,11 +32,10 @@ function doGet(e) {
     }
 
     if (op === 'put') {
-      // Firebase Security Rules remain the final authority. ADMIN is therefore unable to write
-      // active_operator exactly as on the direct RTDB path.
+      // Do not trust the client-side UID. Firebase Security Rules verify auth.uid, role, active
+      // and the complete lease shape before accepting this write.
       const value = decodeOperatorPayload_(String(p.payload_b64 || ''));
-      if (!value || String(value.uid || '') !== String(auth.uid || ''))
-        throw new Error('Dữ liệu active_operator không khớp tài khoản đăng nhập.');
+      if (!value || !String(value.uid || '')) throw new Error('Dữ liệu active_operator không hợp lệ.');
       const response = UrlFetchApp.fetch(operatorUrl_(idToken), {
         method: 'put',
         contentType: 'application/json',
