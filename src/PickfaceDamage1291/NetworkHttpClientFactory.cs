@@ -154,6 +154,7 @@ internal static class NetworkHttpClientFactory
     /// offline in that situation. This handler first uses RTDB directly, then transparently
     /// relays the same authenticated RTDB request through the approved Apps Script gateway.
     /// Firebase ID token + Security Rules remain the authority; the relay is not an admin bypass.
+    /// v1.4.6 also meters request counts/bytes locally without storing request bodies or tokens.
     /// </summary>
     private sealed class FirebaseRtdbFallbackHandler(HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
     {
@@ -169,26 +170,42 @@ internal static class NetworkHttpClientFactory
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (!IsFirebaseRtdbRequest(request.RequestUri))
-                return await base.SendAsync(request, cancellationToken);
-
-            var relayRequest = await CaptureRelayRequestAsync(request, cancellationToken);
-            if (relayRequest is null)
-                return await base.SendAsync(request, cancellationToken);
-
+            var uri = request.RequestUri;
+            var isRtdb = IsFirebaseRtdbRequest(uri);
             var isEventStream = request.Headers.Accept.Any(x =>
                 string.Equals(x.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase));
 
+            // When relay mode is active the SSE request is intentionally converted to slow polling
+            // and never reaches Firebase. Do not count that synthetic 503 as an RTDB read.
+            if (isRtdb && IsRtdbRelayPreferred && isEventStream)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(27), cancellationToken);
+                return ServiceUnavailableForPolling(request);
+            }
+
+            var gatewayAction = !isRtdb
+                ? await UsageTelemetry.TryReadGatewayActionAsync(request, cancellationToken)
+                : null;
+            var requestBytes = request.Content?.Headers.ContentLength ?? 0;
+            UsageTelemetry.RecordHttpRequest(uri, request.Method, requestBytes, gatewayAction);
+
+            if (!isRtdb)
+            {
+                var response = await base.SendAsync(request, cancellationToken);
+                UsageTelemetry.RecordHttpResponse(uri, response.Content?.Headers.ContentLength ?? 0, gatewayAction);
+                return response;
+            }
+
+            var relayRequest = await CaptureRelayRequestAsync(request, cancellationToken);
+            if (relayRequest is null)
+            {
+                var response = await base.SendAsync(request, cancellationToken);
+                UsageTelemetry.RecordHttpResponse(uri, response.Content?.Headers.ContentLength ?? 0);
+                return response;
+            }
+
             if (IsRtdbRelayPreferred)
             {
-                if (isEventStream)
-                {
-                    // Apps Script web apps are request/response, not an SSE tunnel. Slow the
-                    // realtime reconnect loop while normal snapshot/heartbeat calls use relay.
-                    await Task.Delay(TimeSpan.FromSeconds(27), cancellationToken);
-                    return ServiceUnavailableForPolling(request);
-                }
-
                 var preferred = await TryRelayAsync(relayRequest, cancellationToken);
                 if (preferred is not null) return preferred;
 
@@ -201,6 +218,7 @@ internal static class NetworkHttpClientFactory
             try
             {
                 directResponse = await base.SendAsync(request, cancellationToken);
+                UsageTelemetry.RecordHttpResponse(uri, directResponse.Content?.Headers.ContentLength ?? 0);
                 if (!FallbackStatuses.Contains(directResponse.StatusCode))
                     return directResponse;
             }
@@ -289,12 +307,15 @@ internal static class NetworkHttpClientFactory
                         if_match = request.IfMatch
                     }
                 });
-                using var message = new HttpRequestMessage(HttpMethod.Post, RuntimeConfigService.GoogleGatewayUrl)
+                var gatewayUri = new Uri(RuntimeConfigService.GoogleGatewayUrl);
+                UsageTelemetry.RecordHttpRequest(gatewayUri, HttpMethod.Post, Encoding.UTF8.GetByteCount(json), "rtdb_proxy");
+                using var message = new HttpRequestMessage(HttpMethod.Post, gatewayUri)
                 {
                     Content = new StringContent(json, Encoding.UTF8, "application/json")
                 };
                 using var response = await RelayHttp.SendAsync(message, HttpCompletionOption.ResponseContentRead, ct);
                 var text = await response.Content.ReadAsStringAsync(ct);
+                UsageTelemetry.RecordHttpResponse(gatewayUri, Encoding.UTF8.GetByteCount(text), "rtdb_proxy");
                 if (!response.IsSuccessStatusCode) return null;
 
                 using var doc = JsonDocument.Parse(text);
@@ -305,6 +326,9 @@ internal static class NetworkHttpClientFactory
 
                 var body = root.TryGetProperty("body", out var bodyNode) ? bodyNode.GetString() ?? string.Empty : string.Empty;
                 var etag = root.TryGetProperty("etag", out var etagNode) ? etagNode.GetString() ?? string.Empty : string.Empty;
+                if (Uri.TryCreate(CloudConfig.FirebaseDatabaseUrl, UriKind.Absolute, out var dbUri))
+                    UsageTelemetry.RecordHttpResponse(dbUri, Encoding.UTF8.GetByteCount(body));
+
                 var proxied = new HttpResponseMessage((HttpStatusCode)statusCode)
                 {
                     Content = new StringContent(body, Encoding.UTF8, "application/json")

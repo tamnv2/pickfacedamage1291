@@ -198,8 +198,7 @@ internal static class VersionUpdateService
 
     private static HttpClient CreateHttpClient()
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PickfaceDamage1291-Updater");
+        var client = NetworkHttpClientFactory.Create(TimeSpan.FromMinutes(5), "PickfaceDamage1291-Updater");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
     }
