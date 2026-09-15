@@ -49,10 +49,10 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Restore
-        run: dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj
+        run: dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj -p:EnableWindowsTargeting=true
 
       - name: Build
-        run: dotnet build src/PickfaceDamage1291/PickfaceDamage1291.csproj -c Release --no-restore
+        run: dotnet build src/PickfaceDamage1291/PickfaceDamage1291.csproj -c Release --no-restore -p:EnableWindowsTargeting=true
 
       - name: Commit patched sources
         run: |
