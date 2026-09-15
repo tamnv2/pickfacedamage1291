@@ -76,6 +76,12 @@ CREATE TABLE IF NOT EXISTS damage_images (
     PRIMARY KEY(report_id, sequence),
     FOREIGN KEY(report_id) REFERENCES damage_reports(report_id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS deleted_reports (
+    report_id TEXT PRIMARY KEY,
+    deleted_at TEXT NOT NULL,
+    deleted_by TEXT NOT NULL,
+    remote_tombstoned INTEGER NOT NULL DEFAULT 0
+);
 CREATE INDEX IF NOT EXISTS idx_damage_created ON damage_reports(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_damage_status ON damage_reports(sync_status);
 """;
@@ -423,6 +429,134 @@ WHERE report_id=$id
         cmd.Parameters.AddWithValue("$id", reportId);
         cmd.Parameters.AddWithValue("$seq", sequence);
         cmd.ExecuteNonQuery();
+    }
+
+    public static string? FindExactDuplicateReport(DamageReport candidate, IReadOnlyList<string> candidateImagePaths)
+    {
+        var candidateHashes = HashImages(candidateImagePaths);
+        if (candidateHashes is null) return null;
+
+        var ids = new List<string>();
+        using (var cn = Open())
+        using (var cmd = cn.CreateCommand())
+        {
+            cmd.CommandText = """
+SELECT report_id
+FROM damage_reports
+WHERE occurred_date=$date
+  AND occurred_hour=$h
+  AND occurred_minute=$m
+  AND shift=$shift
+  AND sku=$sku
+  AND product_name=$name
+  AND location=$loc
+  AND quantity=$qty
+  AND base_unit=$base
+ORDER BY created_at DESC
+""";
+            cmd.Parameters.AddWithValue("$date", candidate.OccurredDate.ToString("yyyy-MM-dd"));
+            cmd.Parameters.AddWithValue("$h", candidate.Hour);
+            cmd.Parameters.AddWithValue("$m", candidate.Minute);
+            cmd.Parameters.AddWithValue("$shift", candidate.Shift);
+            cmd.Parameters.AddWithValue("$sku", candidate.Sku);
+            cmd.Parameters.AddWithValue("$name", candidate.ProductName);
+            cmd.Parameters.AddWithValue("$loc", candidate.Location);
+            cmd.Parameters.AddWithValue("$qty", candidate.Quantity.ToString(CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("$base", candidate.BaseUnit);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) ids.Add(r.GetString(0));
+        }
+
+        foreach (var id in ids)
+        {
+            var existing = GetImages(id).Select(x => x.LocalPath).ToList();
+            var existingHashes = HashImages(existing);
+            if (existingHashes is null) continue;
+            if (candidateHashes.SequenceEqual(existingHashes, StringComparer.OrdinalIgnoreCase))
+                return id;
+        }
+        return null;
+    }
+
+    private static List<string>? HashImages(IReadOnlyList<string> paths)
+    {
+        var hashes = new List<string>(paths.Count);
+        foreach (var path in paths)
+        {
+            if (!File.Exists(path)) return null;
+            try { hashes.Add(ImageHashService.Sha256File(path)); }
+            catch { return null; }
+        }
+        hashes.Sort(StringComparer.OrdinalIgnoreCase);
+        return hashes;
+    }
+
+    public static bool DeleteDamageReport(string reportId, string deletedBy, bool remoteTombstoned)
+    {
+        if (string.IsNullOrWhiteSpace(reportId)) return false;
+        var imagePaths = new List<string>();
+        var deleted = false;
+
+        using (var cn = Open())
+        using (var tx = cn.BeginTransaction())
+        {
+            using (var images = cn.CreateCommand())
+            {
+                images.Transaction = tx;
+                images.CommandText = "SELECT local_path FROM damage_images WHERE report_id=$id";
+                images.Parameters.AddWithValue("$id", reportId);
+                using var r = images.ExecuteReader();
+                while (r.Read()) imagePaths.Add(r.GetString(0));
+            }
+
+            using (var tombstone = cn.CreateCommand())
+            {
+                tombstone.Transaction = tx;
+                tombstone.CommandText = """
+INSERT INTO deleted_reports(report_id,deleted_at,deleted_by,remote_tombstoned)
+VALUES($id,$at,$by,$remote)
+ON CONFLICT(report_id) DO UPDATE SET
+ deleted_at=excluded.deleted_at,
+ deleted_by=excluded.deleted_by,
+ remote_tombstoned=excluded.remote_tombstoned
+""";
+                tombstone.Parameters.AddWithValue("$id", reportId);
+                tombstone.Parameters.AddWithValue("$at", DateTime.UtcNow.ToString("O"));
+                tombstone.Parameters.AddWithValue("$by", deletedBy);
+                tombstone.Parameters.AddWithValue("$remote", remoteTombstoned ? 1 : 0);
+                tombstone.ExecuteNonQuery();
+            }
+
+            using (var del = cn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM damage_reports WHERE report_id=$id";
+                del.Parameters.AddWithValue("$id", reportId);
+                deleted = del.ExecuteNonQuery() == 1;
+            }
+            tx.Commit();
+        }
+
+        if (!deleted) return false;
+
+        var root = Path.GetFullPath(AppPaths.PendingImages).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var path in imagePaths)
+        {
+            try
+            {
+                var full = Path.GetFullPath(path);
+                if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+                if (File.Exists(full)) File.Delete(full);
+                var parent = Path.GetDirectoryName(full);
+                if (!string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent) && !Directory.EnumerateFileSystemEntries(parent).Any())
+                    Directory.Delete(parent, false);
+            }
+            catch
+            {
+                // DB deletion remains authoritative. Orphan local files can be cleaned later.
+            }
+        }
+        return true;
     }
 
     public static void SetReportStatus(string reportId, string status, string? error = null)
