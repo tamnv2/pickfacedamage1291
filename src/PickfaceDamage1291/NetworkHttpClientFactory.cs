@@ -19,18 +19,19 @@ internal static class NetworkHttpClientFactory
 
     public static HttpClient Create(TimeSpan timeout, string userAgent)
     {
-        // Resolve the Windows proxy dynamically for every new connection instead of pinning
-        // the proxy object that existed when the app started. This matters when a laptop moves
-        // between home/mobile Internet and an internal corporate LAN/PAC configuration.
+        // Let .NET use the Windows/system proxy directly. Do not wrap IWebProxy:
+        // some Windows/PAC configurations can return the destination URI itself for a
+        // direct connection; wrapping that value can make SocketsHttpHandler treat the
+        // destination as a proxy and create an invalid CONNECT tunnel to script.google.com.
         var handler = new SocketsHttpHandler
         {
             UseProxy = true,
-            Proxy = new RefreshingSystemProxy(),
+            Proxy = null,
+            DefaultProxyCredentials = CredentialCache.DefaultCredentials,
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
 
-            // Force stale DNS/TCP/proxy routes to age out quickly after a Wi-Fi/LAN switch.
-            // The app has low request volume, so the extra TLS handshakes are a better tradeoff
-            // than allowing a dead pooled route to freeze business operations for minutes.
+            // Keep connections short-lived so DNS/TCP routes are refreshed quickly after
+            // switching Wi-Fi/LAN, without replacing the system proxy implementation.
             PooledConnectionLifetime = TimeSpan.FromSeconds(5),
             PooledConnectionIdleTimeout = TimeSpan.FromSeconds(5),
             ConnectTimeout = TimeSpan.FromSeconds(12)
@@ -112,26 +113,5 @@ internal static class NetworkHttpClientFactory
         for (Exception? current = ex; current is not null; current = current.InnerException)
             if (current is T typed) return typed;
         return null;
-    }
-
-    private sealed class RefreshingSystemProxy : IWebProxy
-    {
-        public ICredentials? Credentials { get; set; } = CredentialCache.DefaultCredentials;
-
-        public Uri GetProxy(Uri destination)
-        {
-            var proxy = WebRequest.DefaultWebProxy;
-            if (proxy is null) return destination;
-            proxy.Credentials = Credentials;
-            return proxy.GetProxy(destination) ?? destination;
-        }
-
-        public bool IsBypassed(Uri host)
-        {
-            var proxy = WebRequest.DefaultWebProxy;
-            if (proxy is null) return true;
-            proxy.Credentials = Credentials;
-            return proxy.IsBypassed(host);
-        }
     }
 }
