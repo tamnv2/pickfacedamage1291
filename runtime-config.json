@@ -1,0 +1,4 @@
+{
+  "google_gateway_url": "",
+  "note": "Public runtime metadata only. Never put passwords, OAuth secrets, refresh tokens or service-account keys in this file."
+}
