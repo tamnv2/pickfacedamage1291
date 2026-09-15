@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -227,31 +228,68 @@ internal static class GoogleGatewayV140
 
     private static async Task<JsonElement> CallAsync(string action, object payload, CancellationToken ct)
     {
-        var session = AppSession.Current ?? throw new InvalidOperationException("Chưa đăng nhập ứng dụng.");
-        if (session.OfflineMode) throw new InvalidOperationException("Đang làm việc offline.");
-        if (!RuntimeConfigService.IsGoogleGatewayConfigured)
-            throw new InvalidOperationException("Kết nối Google dùng chung chưa sẵn sàng.");
-
-        await FirebaseClient.EnsureFreshAsync(session, ct);
-        var body = JsonSerializer.Serialize(new { action, id_token = session.IdToken, payload });
-        using var request = new HttpRequestMessage(HttpMethod.Post, RuntimeConfigService.GoogleGatewayUrl)
+        var stopwatch = Stopwatch.StartNew();
+        AppLog.Info("GATEWAY_CALL_START", "Bắt đầu gọi Google gateway.", new Dictionary<string, object?>
         {
-            Content = new StringContent(body, Encoding.UTF8, "application/json")
-        };
-        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct);
-        var text = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"Gateway Google lỗi HTTP {(int)response.StatusCode}.");
+            ["action"] = action
+        });
 
-        using var doc = JsonDocument.Parse(text);
-        var root = doc.RootElement;
-        var ok = root.TryGetProperty("ok", out var okNode) && okNode.ValueKind == JsonValueKind.True;
-        if (!ok)
+        try
         {
-            var error = root.TryGetProperty("error", out var errorNode) ? errorNode.GetString() : null;
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "Google từ chối yêu cầu." : error);
+            var session = AppSession.Current ?? throw new InvalidOperationException("Chưa đăng nhập ứng dụng.");
+            if (session.OfflineMode) throw new InvalidOperationException("Đang làm việc offline.");
+            if (!RuntimeConfigService.IsGoogleGatewayConfigured)
+                throw new InvalidOperationException("Kết nối Google dùng chung chưa sẵn sàng.");
+
+            await FirebaseClient.EnsureFreshAsync(session, ct);
+            var body = JsonSerializer.Serialize(new { action, id_token = session.IdToken, payload });
+            using var request = new HttpRequestMessage(HttpMethod.Post, RuntimeConfigService.GoogleGatewayUrl)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct);
+            var text = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                AppLog.Warning("GATEWAY_HTTP_ERROR", "Google gateway trả HTTP không thành công.", new Dictionary<string, object?>
+                {
+                    ["action"] = action,
+                    ["http_status"] = (int)response.StatusCode,
+                    ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+                });
+                throw new InvalidOperationException($"Gateway Google lỗi HTTP {(int)response.StatusCode}.");
+            }
+
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            var ok = root.TryGetProperty("ok", out var okNode) && okNode.ValueKind == JsonValueKind.True;
+            if (!ok)
+            {
+                var error = root.TryGetProperty("error", out var errorNode) ? errorNode.GetString() : null;
+                AppLog.Warning("GATEWAY_REJECTED", error ?? "Google từ chối yêu cầu.", new Dictionary<string, object?>
+                {
+                    ["action"] = action,
+                    ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+                });
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "Google từ chối yêu cầu." : error);
+            }
+
+            AppLog.Info("GATEWAY_CALL_OK", "Google gateway xử lý thành công.", new Dictionary<string, object?>
+            {
+                ["action"] = action,
+                ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+            });
+            return root.Clone();
         }
-        return root.Clone();
+        catch (Exception ex)
+        {
+            AppLog.Exception("GATEWAY_CALL_FAILED", ex, new Dictionary<string, object?>
+            {
+                ["action"] = action,
+                ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+            });
+            throw;
+        }
     }
 
     private static string Str(JsonElement e, string name)
