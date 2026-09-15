@@ -26,12 +26,27 @@ internal static class DamageReportExportService
             return null;
         }
 
+        // Export date/time must always come from the business fields entered by the operator:
+        // Ngày phát hiện + Giờ phát hiện. CreatedAt/export time is metadata only and must never
+        // replace the actual time when the damage was detected.
+        var firstDetected = DetectionTime(reports[0]);
+        var lastDetected = DetectionTime(reports[^1]);
+        var oneDetectionDate = firstDetected.Date == lastDetected.Date;
+        var fileDateText = oneDetectionDate
+            ? firstDetected.ToString("ddMMyyyy")
+            : $"{firstDetected:ddMMyyyy}-{lastDetected:ddMMyyyy}";
+        var titleDateText = oneDetectionDate
+            ? $"NGÀY {firstDetected:dd/MM/yyyy}"
+            : $"TỪ {firstDetected:dd/MM/yyyy} ĐẾN {lastDetected:dd/MM/yyyy}";
+
         using var save = new SaveFileDialog
         {
             Filter = "Excel Workbook (*.xlsx)|*.xlsx",
             DefaultExt = "xlsx",
             AddExtension = true,
-            FileName = $"Thông tin hàng hư hỏng Pickface 1291 ngày {DateTime.Now:MMddyyyy}.xlsx",
+            FileName = oneDetectionDate
+                ? $"Thông tin hàng hư hỏng Pickface 1291 ngày {fileDateText}.xlsx"
+                : $"Thông tin hàng hư hỏng Pickface 1291 từ {fileDateText}.xlsx",
             Title = "Lưu danh sách hàng hỏng Pickface 1291"
         };
         if (save.ShowDialog(owner) != DialogResult.OK) return null;
@@ -43,7 +58,7 @@ internal static class DamageReportExportService
 
         ws.Range(1, 1, 1, 8).Merge();
         var title = ws.Cell(1, 1);
-        title.Value = $"DANH SÁCH HÀNG HỎNG PICKFACE 1291 -  NGÀY {DateTime.Now:dd/MM/yyyy}";
+        title.Value = $"DANH SÁCH HÀNG HỎNG PICKFACE 1291 - {titleDateText}";
         title.Style.Font.Bold = true;
         title.Style.Font.FontSize = 16;
         title.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
@@ -78,7 +93,13 @@ internal static class DamageReportExportService
             ws.Cell(row, 2).Value = report.Sku;
             ws.Cell(row, 3).Value = report.ProductName;
             ws.Cell(row, 4).Value = report.Location;
-            ws.Cell(row, 5).Value = $"{report.OccurredDate:dd/MM/yyyy} {report.Hour:00}:{report.Minute:00}";
+
+            // Store an actual Excel DateTime value instead of a display string. This makes the
+            // visible value and Excel's underlying value both equal to the saved detection time.
+            var detectedAt = DetectionTime(report);
+            ws.Cell(row, 5).Value = detectedAt;
+            ws.Cell(row, 5).Style.DateFormat.Format = "dd/MM/yyyy HH:mm";
+
             ws.Cell(row, 6).Value = decimal.Truncate(report.Quantity);
             ws.Cell(row, 7).Value = report.BaseUnit;
 
@@ -170,6 +191,11 @@ internal static class DamageReportExportService
         progress?.Report("Đã xuất Excel.");
         return new DamageExportResult(save.FileName, reports.Count, totalImages, missingImages);
     }
+
+    private static DateTime DetectionTime(DamageReport report)
+        => report.OccurredDate.Date
+            .AddHours(Math.Clamp(report.Hour, 0, 23))
+            .AddMinutes(Math.Clamp(report.Minute, 0, 59));
 
     private static void ConfigureSheet(IXLWorksheet ws)
     {
