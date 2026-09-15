@@ -119,7 +119,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes @google/clasp@3 redeploy "$DEPLOYMENT_ID" "$GAS_VERSION" "GitHub main ${GITHUB_SHA::7}"
+          npx --yes @google/clasp@3 create-deployment \
+  -V "$GAS_VERSION" \
+  -d "GitHub main ${GITHUB_SHA::7}" \
+  -i "$DEPLOYMENT_ID"
 
       - name: Verify deployment and live gateway
         shell: bash
