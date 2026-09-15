@@ -33,6 +33,11 @@ internal static class V142RuntimeCorrections
         if (sku is null || productName is null || baseUnit is null || location is null || shift is null || quantity is null) return;
 
         var toolTip = new ToolTip { AutoPopDelay = 7000, InitialDelay = 300, ReshowDelay = 150 };
+        var initialPermission = ParseStatusPermission(status?.Text);
+        var externalAllowed = initialPermission ??
+                              (AppSession.Current?.Profile.IsAdmin == true
+                                  ? false
+                                  : AppSession.OperatorManager?.CanCreateDamage == true);
 
         bool FieldsReady()
         {
@@ -44,26 +49,24 @@ internal static class V142RuntimeCorrections
             return validProduct && validLocation && !string.IsNullOrWhiteSpace(shift.SelectedShift) && quantity.Value >= 1;
         }
 
-        bool PermissionReady()
-        {
-            var parsed = ParseStatusPermission(status?.Text);
-            if (parsed.HasValue) return parsed.Value;
-            if (AppSession.Current?.Profile.IsAdmin == true) return false;
-            return AppSession.OperatorManager?.CanCreateDamage == true;
-        }
-
         void ApplyState()
         {
             if (form.IsDisposed || send.IsDisposed) return;
             var fieldsReady = FieldsReady();
-            var permissionReady = PermissionReady();
-            send.Enabled = fieldsReady && permissionReady;
+            send.Enabled = fieldsReady && externalAllowed;
             toolTip.SetToolTip(send,
                 !fieldsReady
                     ? "Nhập đủ SKU hợp lệ, vị trí, ngày/giờ, ca và số lượng để mở khóa nút Gửi."
-                    : !permissionReady
+                    : !externalAllowed
                         ? "Thông tin đã đủ nhưng quyền gửi đang tạm khóa theo trạng thái phiên hiện tại."
                         : string.Empty);
+        }
+
+        void StatusChanged()
+        {
+            var parsed = ParseStatusPermission(status?.Text);
+            if (parsed.HasValue) externalAllowed = parsed.Value;
+            ApplyState();
         }
 
         sku.TextChanged += (_, _) => ApplyState();
@@ -72,7 +75,7 @@ internal static class V142RuntimeCorrections
         location.TextChanged += (_, _) => ApplyState();
         shift.SelectedShiftChanged += (_, _) => ApplyState();
         quantity.ValueChanged += (_, _) => ApplyState();
-        if (status is not null) status.TextChanged += (_, _) => ApplyState();
+        if (status is not null) status.TextChanged += (_, _) => StatusChanged();
         form.FormClosed += (_, _) => toolTip.Dispose();
         ApplyState();
     }
