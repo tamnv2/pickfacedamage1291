@@ -28,8 +28,19 @@ internal static class UsernameAuthService
         if (string.IsNullOrWhiteSpace(uid) || string.IsNullOrWhiteSpace(idToken) || string.IsNullOrWhiteSpace(refreshToken))
             throw new InvalidOperationException("Gateway đăng nhập không trả đủ thông tin phiên Firebase.");
 
-        var profile = await FirebaseClient.GetProfileAsync(uid, idToken, ct)
-                      ?? throw new InvalidOperationException("Tài khoản chưa được cấp hồ sơ sử dụng ứng dụng. Liên hệ ADMIN.");
+        FirebaseUserProfile? profile;
+        try
+        {
+            profile = await FirebaseClient.GetProfileAsync(uid, idToken, ct);
+        }
+        catch (Exception directEx) when (!ct.IsCancellationRequested)
+        {
+            AppLog.Warning("DIRECT_FIREBASE_PROFILE_READ_FAILED", NetworkHttpClientFactory.Friendly(directEx, "Firebase user profile"));
+            profile = await OfficeNetworkFirebaseBridge.GetProfileAsync(uid, idToken, ct);
+            AppLog.Info("OFFICE_LOGIN_PROFILE_FALLBACK_OK", "Đăng nhập đã đọc hồ sơ qua Google Gateway do mạng hiện tại không truy cập được Firebase RTDB trực tiếp.");
+        }
+
+        profile ??= throw new InvalidOperationException("Tài khoản chưa được cấp hồ sơ sử dụng ứng dụng. Liên hệ ADMIN.");
         if (!profile.Active) throw new InvalidOperationException("Tài khoản đã bị khóa hoặc ngừng hoạt động.");
         if (!string.Equals(profile.Username, username.Trim(), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Tên tài khoản không khớp hồ sơ Firebase.");
