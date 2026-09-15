@@ -9,8 +9,8 @@ const CFG = Object.freeze({
 });
 
 const LOGIN_ALIAS_PREFIX = 'LOGIN_ALIAS_';
-const GATEWAY_VERSION = '1.4.1';
-const GATEWAY_CAPABILITIES = Object.freeze(['pull_changes','push_products','pull_products','append_audit','list_audit','delete_audit_range','upload_log','sync_report','get_image']);
+const GATEWAY_VERSION = '1.4.5';
+const GATEWAY_CAPABILITIES = Object.freeze(['pull_changes','push_products','pull_products','append_audit','list_audit','delete_audit_range','upload_log','sync_report','get_image','rtdb_proxy']);
 
 const HEADERS = [
   'ID', 'Ngày phát hiện', 'Giờ phát hiện', 'Ca', 'SKU', 'Tên sản phẩm', 'Vị trí phát hiện',
@@ -39,6 +39,10 @@ function doPost(e) {
 
     const idToken = String(request.id_token || '');
     const auth = authenticateFirebase_(idToken);
+
+    if (action === 'rtdb_proxy') {
+      return json_({ ok: true, ...rtdbProxyV145_(auth, idToken, payload) });
+    }
 
     if (action === 'change_own_email') {
       return json_(changeOwnEmail_(auth, String(payload.current_password || ''), String(payload.new_email || '')));
@@ -164,7 +168,6 @@ function passwordResetByUsername_(username) {
   return { ok: true };
 }
 
-
 function changeOwnEmail_(auth, currentPassword, newEmail) {
   const oldEmail = String(auth.firebase_email || auth.profile.email || '').trim();
   const username = normalizeUsername_(auth.profile.username || '');
@@ -233,7 +236,6 @@ function changeOwnEmail_(auth, currentPassword, newEmail) {
       expires_in: String(updated.expiresIn || '3600')
     };
   } catch (err) {
-    // Fail closed: try to put Authentication + RTDB + alias back to the old email.
     try {
       const rollback = UrlFetchApp.fetch(
         'https://identitytoolkit.googleapis.com/v1/accounts:update?key=' + encodeURIComponent(CFG.FIREBASE_API_KEY),
@@ -323,6 +325,66 @@ function authenticateFirebase_(idToken) {
   if (!profile || profile.active !== true) throw new Error('Tài khoản chưa được cấp quyền hoặc đã bị khóa.');
   if (String(profile.uid || user.localId) !== String(user.localId)) throw new Error('UID hồ sơ không khớp Firebase Authentication.');
   return { uid: user.localId, profile: profile, firebase_email: String(user.email || profile.email || '') };
+}
+
+// Restricted RTDB relay for networks that allow Google Apps Script but block the Firebase RTDB host.
+// It never uses an admin credential. The caller's Firebase ID token is forwarded to RTDB, therefore
+// the existing Firebase Security Rules remain the final authority for every read/write.
+function rtdbProxyV145_(auth, idToken, payload) {
+  const method = String(payload.method || 'GET').toUpperCase();
+  const path = String(payload.path || '').replace(/^\/+|\/+$/g, '');
+  const role = String(auth.profile.role || '').toLowerCase();
+  let targetPath = '';
+
+  if (path === '.info/serverTimeOffset' && method === 'GET') {
+    targetPath = '.info/serverTimeOffset';
+  } else if (path === 'active_operator' && (method === 'GET' || method === 'PUT' || method === 'DELETE')) {
+    if ((method === 'PUT' || method === 'DELETE') && role !== 'user')
+      throw new Error('ADMIN không được ghi active_operator.');
+    targetPath = 'active_operator';
+  } else if (path === 'users' && method === 'GET') {
+    requireAdmin_(auth.profile);
+    targetPath = 'users';
+  } else {
+    const userMatch = path.match(/^users\/([^/]+)$/);
+    if (!userMatch || (method !== 'GET' && method !== 'PUT'))
+      throw new Error('RTDB relay từ chối path/method ngoài danh sách cho phép.');
+    let uid = '';
+    try { uid = decodeURIComponent(userMatch[1]); } catch (_) { throw new Error('UID RTDB không hợp lệ.'); }
+    if (!uid || (uid !== String(auth.uid || '') && role !== 'admin'))
+      throw new Error('Không có quyền truy cập hồ sơ RTDB này.');
+    targetPath = 'users/' + encodeURIComponent(uid);
+  }
+
+  const headers = {};
+  if (payload.want_etag === true) headers['X-Firebase-ETag'] = 'true';
+  const ifMatch = String(payload.if_match || '').trim();
+  if (ifMatch) headers['if-match'] = ifMatch;
+
+  const options = {
+    method: method.toLowerCase(),
+    muteHttpExceptions: true,
+    headers: headers
+  };
+  if (method === 'PUT') {
+    const body = String(payload.body || 'null');
+    if (body.length > 256 * 1024) throw new Error('RTDB relay body vượt 256 KB.');
+    try { JSON.parse(body); } catch (_) { throw new Error('RTDB relay body không phải JSON hợp lệ.'); }
+    options.contentType = 'application/json';
+    options.payload = body;
+  }
+
+  const response = UrlFetchApp.fetch(
+    CFG.FIREBASE_DB_URL + '/' + targetPath + '.json?auth=' + encodeURIComponent(idToken),
+    options
+  );
+  const allHeaders = response.getAllHeaders() || {};
+  const etag = String(allHeaders.ETag || allHeaders.Etag || allHeaders.etag || '');
+  return {
+    http_status: response.getResponseCode(),
+    body: response.getContentText() || '',
+    etag: etag
+  };
 }
 
 function requireAdmin_(profile) {
@@ -545,7 +607,6 @@ function cleanError_(err) {
 function json_(value) {
   return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON);
 }
-
 
 // V140_SYNC_BLOCK — Google Sheet is the shared business source of truth; SQLite is local cache/outbox.
 const REPORT_HEADERS_V140 = HEADERS.concat([
