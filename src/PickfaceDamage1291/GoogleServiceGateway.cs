@@ -52,97 +52,149 @@ internal static class GoogleService
         return Task.CompletedTask;
     }
 
+    private static readonly SemaphoreSlim MutationGate = new(1, 1);
+
     public static async Task SyncReportAsync(DamageReport report, IProgress<int>? progress = null)
     {
         EnsureGatewayReady();
+        await MutationGate.WaitAsync();
         try
         {
-            progress?.Report(5);
-            Database.SetReportStatus(report.ReportId, "SYNCING");
-            var localImages = Database.GetImages(report.ReportId);
-            var imagePayload = new List<object>();
-
-            var imageIndex = 0;
-            foreach (var image in localImages.OrderBy(x => x.Sequence))
+            try
             {
-                string? base64 = null;
-                string? mimeType = null;
-                string? originalName = null;
-                if (string.IsNullOrWhiteSpace(image.DriveFileId))
+                progress?.Report(5);
+                Database.SetReportStatus(report.ReportId, "SYNCING");
+                var localImages = Database.GetImages(report.ReportId);
+                var imagePayload = new List<object>();
+
+                var imageIndex = 0;
+                foreach (var image in localImages.OrderBy(x => x.Sequence))
                 {
-                    if (!File.Exists(image.LocalPath))
-                        throw new FileNotFoundException("Không tìm thấy ảnh trên máy để đồng bộ.", image.LocalPath);
-                    var bytes = await File.ReadAllBytesAsync(image.LocalPath);
-                    base64 = Convert.ToBase64String(bytes);
-                    mimeType = GetMimeType(image.LocalPath);
-                    originalName = Path.GetFileName(image.LocalPath);
+                    string? base64 = null;
+                    string? mimeType = null;
+                    string? originalName = null;
+                    if (string.IsNullOrWhiteSpace(image.DriveFileId))
+                    {
+                        if (!File.Exists(image.LocalPath))
+                            throw new FileNotFoundException("Không tìm thấy ảnh trên máy để đồng bộ.", image.LocalPath);
+                        var bytes = await File.ReadAllBytesAsync(image.LocalPath);
+                        base64 = Convert.ToBase64String(bytes);
+                        mimeType = GetMimeType(image.LocalPath);
+                        originalName = Path.GetFileName(image.LocalPath);
+                    }
+
+                    imagePayload.Add(new
+                    {
+                        sequence = image.Sequence,
+                        drive_file_id = image.DriveFileId ?? string.Empty,
+                        drive_link = image.DriveLink ?? string.Empty,
+                        original_name = originalName ?? string.Empty,
+                        mime_type = mimeType ?? string.Empty,
+                        data_base64 = base64 ?? string.Empty
+                    });
+
+                    imageIndex++;
+                    var imageProgress = localImages.Count == 0 ? 30 : 10 + (int)Math.Round(25d * imageIndex / localImages.Count);
+                    progress?.Report(imageProgress);
                 }
 
-                imagePayload.Add(new
+                if (localImages.Count == 0) progress?.Report(35);
+
+                var payload = new
                 {
-                    sequence = image.Sequence,
-                    drive_file_id = image.DriveFileId ?? string.Empty,
-                    drive_link = image.DriveLink ?? string.Empty,
-                    original_name = originalName ?? string.Empty,
-                    mime_type = mimeType ?? string.Empty,
-                    data_base64 = base64 ?? string.Empty
-                });
+                    report = new
+                    {
+                        report_id = report.ReportId,
+                        occurred_date = report.OccurredDate.ToString("yyyy-MM-dd"),
+                        hour = report.Hour,
+                        minute = report.Minute,
+                        shift = report.Shift,
+                        sku = report.Sku,
+                        product_name = report.ProductName,
+                        location = report.Location,
+                        quantity = decimal.Truncate(report.Quantity),
+                        base_unit = report.BaseUnit,
+                        created_at = report.CreatedAt.ToString("O"),
+                        created_by = report.CreatedBy,
+                        version = report.Version,
+                        updated_at = report.UpdatedAt?.ToString("O") ?? string.Empty,
+                        updated_by = report.UpdatedBy ?? string.Empty
+                    },
+                    images = imagePayload
+                };
 
-                imageIndex++;
-                var imageProgress = localImages.Count == 0 ? 30 : 10 + (int)Math.Round(25d * imageIndex / localImages.Count);
-                progress?.Report(imageProgress);
+                progress?.Report(45);
+                var root = await CallGatewayAsync("sync_report", payload);
+                progress?.Report(88);
+                ValidateGatewayResult(report, localImages, root);
+
+                if (root.TryGetProperty("images", out var imagesNode) && imagesNode.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in imagesNode.EnumerateArray())
+                    {
+                        var sequence = item.TryGetProperty("sequence", out var seqNode) ? seqNode.GetInt32() : 0;
+                        var fileId = item.TryGetProperty("file_id", out var fileNode) ? fileNode.GetString() ?? string.Empty : string.Empty;
+                        var link = item.TryGetProperty("url", out var urlNode) ? urlNode.GetString() ?? string.Empty : string.Empty;
+                        if (sequence > 0 && !string.IsNullOrWhiteSpace(fileId) && !string.IsNullOrWhiteSpace(link))
+                            Database.UpdateImageDrive(report.ReportId, sequence, fileId, link);
+                    }
+                }
+
+                progress?.Report(96);
+                Database.SetReportStatus(report.ReportId, "SYNCED");
+                progress?.Report(100);
             }
+            catch (Exception ex)
+            {
+                Database.SetReportStatus(report.ReportId, "ERROR", ex.Message);
+                throw;
+            }
+        }
+        finally
+        {
+            MutationGate.Release();
+        }
+    }
 
-            if (localImages.Count == 0) progress?.Report(35);
-
+    public static async Task MarkReportDeletedAsync(DamageReport report, string deletedBy)
+    {
+        EnsureGatewayReady();
+        await MutationGate.WaitAsync();
+        try
+        {
+            var now = DateTime.Now;
             var payload = new
             {
                 report = new
                 {
                     report_id = report.ReportId,
-                    occurred_date = report.OccurredDate.ToString("yyyy-MM-dd"),
-                    hour = report.Hour,
-                    minute = report.Minute,
-                    shift = report.Shift,
-                    sku = report.Sku,
-                    product_name = report.ProductName,
-                    location = report.Location,
-                    quantity = decimal.Truncate(report.Quantity),
-                    base_unit = report.BaseUnit,
+                    occurred_date = string.Empty,
+                    hour = 0,
+                    minute = 0,
+                    shift = string.Empty,
+                    sku = "__DELETED__",
+                    product_name = "ĐÃ XÓA",
+                    location = string.Empty,
+                    quantity = 0,
+                    base_unit = string.Empty,
                     created_at = report.CreatedAt.ToString("O"),
                     created_by = report.CreatedBy,
-                    version = report.Version,
-                    updated_at = report.UpdatedAt?.ToString("O") ?? string.Empty,
-                    updated_by = report.UpdatedBy ?? string.Empty
+                    version = Math.Max(1, report.Version) + 1,
+                    updated_at = now.ToString("O"),
+                    updated_by = deletedBy
                 },
-                images = imagePayload
+                images = Array.Empty<object>()
             };
 
-            progress?.Report(45);
             var root = await CallGatewayAsync("sync_report", payload);
-            progress?.Report(88);
-            ValidateGatewayResult(report, localImages, root);
-
-            if (root.TryGetProperty("images", out var imagesNode) && imagesNode.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in imagesNode.EnumerateArray())
-                {
-                    var sequence = item.TryGetProperty("sequence", out var seqNode) ? seqNode.GetInt32() : 0;
-                    var fileId = item.TryGetProperty("file_id", out var fileNode) ? fileNode.GetString() ?? string.Empty : string.Empty;
-                    var link = item.TryGetProperty("url", out var urlNode) ? urlNode.GetString() ?? string.Empty : string.Empty;
-                    if (sequence > 0 && !string.IsNullOrWhiteSpace(fileId) && !string.IsNullOrWhiteSpace(link))
-                        Database.UpdateImageDrive(report.ReportId, sequence, fileId, link);
-                }
-            }
-
-            progress?.Report(96);
-            Database.SetReportStatus(report.ReportId, "SYNCED");
-            progress?.Report(100);
+            var returnedId = root.TryGetProperty("report_id", out var idNode) ? idNode.GetString() ?? string.Empty : string.Empty;
+            var row = root.TryGetProperty("row", out var rowNode) && rowNode.TryGetInt32(out var rowValue) ? rowValue : 0;
+            if (!string.Equals(returnedId, report.ReportId, StringComparison.Ordinal) || row < 2)
+                throw new InvalidOperationException("Google chưa xác nhận ghi dấu xoá cho phiếu.");
         }
-        catch (Exception ex)
+        finally
         {
-            Database.SetReportStatus(report.ReportId, "ERROR", ex.Message);
-            throw;
+            MutationGate.Release();
         }
     }
 

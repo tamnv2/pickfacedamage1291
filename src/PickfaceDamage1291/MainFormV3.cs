@@ -214,17 +214,43 @@ internal sealed class MainForm : Form
         var refresh = NewButton("Làm mới");
         var sync = NewButton("Đồng bộ lại");
         var edit = NewButton("Chỉnh sửa phiếu (ADMIN)");
+        var selectAll = NewButton("Chọn tất cả");
+        var clearSelection = NewButton("Bỏ chọn");
+        var delete = NewButton("Xoá phiếu đã chọn (ADMIN)");
         var export = NewButton("Xuất Excel — sẽ cập nhật logic");
+        var isAdmin = AppSession.Current?.Profile.IsAdmin == true;
+
         refresh.Click += (_, _) => RefreshReports();
         sync.Click += async (_, _) => await SyncPendingAsync();
         edit.Click += async (_, _) => await EditSelectedReportAsync();
-        edit.Visible = AppSession.Current?.Profile.IsAdmin == true;
+        selectAll.Click += (_, _) =>
+        {
+            _reportGrid.ClearSelection();
+            foreach (DataGridViewRow row in _reportGrid.Rows) row.Selected = true;
+        };
+        clearSelection.Click += (_, _) => _reportGrid.ClearSelection();
+        delete.Click += async (_, _) => await DeleteSelectedReportsAsync();
         export.Click += (_, _) => MessageBox.Show(this, "Chức năng xuất Excel đang giữ chỗ và sẽ cập nhật theo logic OWNER chốt sau.", "Thông báo");
+
+        edit.Visible = isAdmin;
+        selectAll.Visible = isAdmin;
+        clearSelection.Visible = isAdmin;
+        delete.Visible = isAdmin;
         _reportStatus.AutoSize = true;
         _reportStatus.Padding = new Padding(18, 9, 0, 0);
-        top.Controls.AddRange([refresh, sync, edit, export, _reportStatus]);
+        top.Controls.AddRange([refresh, sync, edit, selectAll, clearSelection, delete, export, _reportStatus]);
         commands.Controls.Add(top);
+
         ConfigureGrid(_reportGrid);
+        _reportGrid.MultiSelect = true;
+        _reportGrid.KeyDown += (_, e) =>
+        {
+            if (!e.Control || e.KeyCode != Keys.A) return;
+            foreach (DataGridViewRow row in _reportGrid.Rows) row.Selected = true;
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        };
+
         outer.Controls.Add(commands, 0, 0);
         outer.Controls.Add(_reportGrid, 0, 1);
         tab.Controls.Add(outer);
@@ -398,9 +424,10 @@ internal sealed class MainForm : Form
     {
         Text = text,
         AutoSize = true,
-        Height = 34,
-        Padding = new Padding(8, 0, 8, 0),
-        Margin = new Padding(3, 3, 8, 3)
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        MinimumSize = new Size(0, 42),
+        Padding = new Padding(14, 6, 14, 6),
+        Margin = new Padding(4, 4, 8, 4)
     };
 
     private static void ResizeFlowChildren(FlowLayoutPanel panel)
@@ -545,6 +572,20 @@ internal sealed class MainForm : Form
             DateTime.Now, "PENDING", null, null,
             AppSession.Current?.Profile.Username ?? string.Empty, 1, null, null);
 
+        var duplicateId = Database.FindExactDuplicateReport(report, _draftImages);
+        if (!string.IsNullOrWhiteSpace(duplicateId))
+        {
+            MessageBox.Show(
+                this,
+                "Toàn bộ thông tin và hình ảnh của phiếu này trùng hoàn toàn với một phiếu đã có. Hệ thống không tạo thêm bản ghi trùng.
+
+ID phiếu đã có: " + duplicateId,
+                "Phát hiện phiếu trùng",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
         _send.Enabled = false;
         try
         {
@@ -630,7 +671,7 @@ internal sealed class MainForm : Form
 
     private void RefreshReports()
     {
-        var rows = Database.GetReports();
+        var rows = Database.GetReports(int.MaxValue);
         _reportGrid.Columns.Clear();
         _reportGrid.Rows.Clear();
         _reportGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "ReportId", HeaderText = "ID", Visible = false });
@@ -693,6 +734,132 @@ internal sealed class MainForm : Form
         {
             MessageBox.Show(this, ex.Message, "Không sửa được phiếu", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private async Task DeleteSelectedReportsAsync()
+    {
+        var session = AppSession.Current;
+        if (session is null || !session.Profile.IsAdmin)
+        {
+            MessageBox.Show(this, "Chỉ ADMIN được xoá phiếu đã nhập.", "Không có quyền", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var ids = _reportGrid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => Convert.ToString(row.Cells["ReportId"].Value) ?? string.Empty)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (ids.Count == 0)
+        {
+            MessageBox.Show(this, "Chọn ít nhất một phiếu cần xoá. Có thể dùng Ctrl/Shift hoặc nút Chọn tất cả.", "Chưa chọn phiếu", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!GoogleService.IsConnected())
+        {
+            MessageBox.Show(
+                this,
+                "Xoá phiếu cần kết nối Google để ghi dấu đã xoá trước, tránh dữ liệu quay lại ở lần đồng bộ sau.",
+                "Chưa thể xoá an toàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        var reports = ids.Select(Database.GetReportById).Where(x => x is not null).Cast<DamageReport>().ToList();
+        if (reports.Count == 0)
+        {
+            RefreshReports();
+            MessageBox.Show(this, "Các phiếu đã chọn không còn tồn tại trên máy.", "Dữ liệu đã thay đổi");
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            this,
+            $"Xoá {reports.Count:N0} phiếu đã chọn khỏi danh sách?
+
+Google sẽ được ghi dấu đã xoá để dữ liệu không tự xuất hiện lại khi đồng bộ. Hành động này được ghi vào lịch sử.",
+            "Xác nhận xoá phiếu",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+        if (confirm != DialogResult.Yes) return;
+
+        using var passwordDialog = new AdminPasswordConfirmDialog(reports.Count);
+        if (passwordDialog.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            UseWaitCursor = true;
+            await AccountSelfService.VerifyCurrentPasswordAsync(session, passwordDialog.Password);
+        }
+        catch (Exception ex)
+        {
+            UseWaitCursor = false;
+            MessageBox.Show(this, ex.Message, "Không xác minh được mật khẩu", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        AppPaths.BackupDatabase();
+        var deleted = new List<DamageReport>();
+        var failures = new List<string>();
+        try
+        {
+            foreach (var report in reports)
+            {
+                try
+                {
+                    await GoogleService.MarkReportDeletedAsync(report, session.Profile.Username);
+                    if (Database.DeleteDamageReport(report.ReportId, session.Profile.Username, remoteTombstoned: true))
+                        deleted.Add(report);
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{report.Sku} / {report.ReportId[..Math.Min(8, report.ReportId.Length)]}: {ex.Message}");
+                }
+            }
+
+            if (deleted.Count > 0)
+            {
+                try
+                {
+                    await FirebaseClient.AppendAuditAsync(session, "DAMAGE_REPORTS_DELETED", new
+                    {
+                        count = deleted.Count,
+                        report_ids = deleted.Take(100).Select(x => x.ReportId).ToArray(),
+                        ids_truncated = deleted.Count > 100,
+                        skus = deleted.Take(100).Select(x => x.Sku).ToArray(),
+                        google_tombstone = true
+                    });
+                }
+                catch { }
+            }
+        }
+        finally
+        {
+            UseWaitCursor = false;
+            RefreshReports();
+        }
+
+        if (failures.Count == 0)
+        {
+            MessageBox.Show(this, $"Đã xoá {deleted.Count:N0} phiếu. Google đã được ghi dấu xoá để chống khôi phục lại dữ liệu cũ.", "Đã xoá", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var detail = string.Join("
+", failures.Take(8));
+        if (failures.Count > 8) detail += $"
+... và {failures.Count - 8:N0} phiếu khác.";
+        MessageBox.Show(
+            this,
+            $"Đã xoá {deleted.Count:N0}/{reports.Count:N0} phiếu. Các phiếu lỗi vẫn được giữ nguyên để tránh mất dữ liệu không đồng bộ.
+
+{detail}",
+            "Xoá chưa hoàn tất",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
     }
 
     private static string DisplayStatus(string status) => status switch

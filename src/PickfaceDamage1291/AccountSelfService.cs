@@ -8,6 +8,20 @@ internal static class AccountSelfService
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
+    public static async Task VerifyCurrentPasswordAsync(
+        FirebaseSession session,
+        string currentPassword,
+        CancellationToken ct = default)
+    {
+        EnsureOnline(session);
+        if (string.IsNullOrWhiteSpace(currentPassword))
+            throw new InvalidOperationException("Chưa nhập mật khẩu hiện tại.");
+
+        var reauthenticated = await UsernameAuthService.SignInAsync(session.Profile.Username, currentPassword, ct);
+        if (!string.Equals(reauthenticated.Uid, session.Uid, StringComparison.Ordinal))
+            throw new InvalidOperationException("Không xác minh được tài khoản hiện tại.");
+    }
+
     public static async Task ChangePasswordAsync(
         FirebaseSession session,
         string currentPassword,
@@ -171,6 +185,72 @@ internal static class AccountSelfService
         {
             return fallback;
         }
+    }
+}
+
+internal sealed class AdminPasswordConfirmDialog : Form
+{
+    private readonly TextBox _password = new() { UseSystemPasswordChar = true };
+    public string Password => _password.Text;
+
+    public AdminPasswordConfirmDialog(int reportCount)
+    {
+        Text = "Xác nhận mật khẩu ADMIN";
+        Width = 500;
+        Height = 225;
+        MinimumSize = new Size(460, 210);
+        StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Font = new Font("Segoe UI", 10F);
+
+        var table = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 2, RowCount = 0 };
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        var note = new Label
+        {
+            Text = $"Đang xác nhận xoá {reportCount:N0} phiếu. Mật khẩu không được lưu lại.",
+            AutoSize = true,
+            MaximumSize = new Size(420, 0),
+            ForeColor = Color.DimGray
+        };
+        AddRow(table, "", note);
+        AddRow(table, "Mật khẩu hiện tại", _password);
+
+        var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var ok = new Button { Text = "Xác nhận xoá", AutoSize = true };
+        var cancel = new Button { Text = "Hủy", AutoSize = true, DialogResult = DialogResult.Cancel };
+        AppUiStyle.StyleButton(ok, ButtonVisual.Danger);
+        AppUiStyle.StyleButton(cancel, ButtonVisual.Normal);
+        ok.Click += (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(_password.Text))
+            {
+                MessageBox.Show(this, "Nhập mật khẩu hiện tại của tài khoản ADMIN.", "Thiếu mật khẩu", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            DialogResult = DialogResult.OK;
+            Close();
+        };
+        actions.Controls.AddRange([ok, cancel]);
+        AddRow(table, "", actions);
+        Controls.Add(table);
+        AcceptButton = ok;
+        CancelButton = cancel;
+        Shown += (_, _) => _password.Focus();
+    }
+
+    private static void AddRow(TableLayoutPanel table, string label, Control control)
+    {
+        var row = table.RowCount++;
+        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        table.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0, 8, 12, 12) }, 0, row);
+        control.Dock = control is FlowLayoutPanel ? DockStyle.Top : DockStyle.Fill;
+        control.Margin = new Padding(3, 3, 3, 12);
+        table.Controls.Add(control, 1, row);
     }
 }
 

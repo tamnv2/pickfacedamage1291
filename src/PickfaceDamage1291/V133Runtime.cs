@@ -11,10 +11,18 @@ internal enum ButtonVisual
 
 internal static class AppUiStyle
 {
+    private sealed class FlowLayoutState
+    {
+        public bool Pending;
+    }
+
+    private static readonly ConditionalWeakTable<FlowLayoutPanel, FlowLayoutState> ResponsiveFlows = new();
+
     public static void StyleAllButtons(Control root)
     {
         foreach (var button in FindAll<Button>(root))
             StyleButton(button, Classify(button.Text));
+        BindResponsiveFlows(root);
     }
 
     public static void StyleButton(Button button, ButtonVisual visual)
@@ -27,16 +35,14 @@ internal static class AppUiStyle
         button.TextAlign = ContentAlignment.MiddleCenter;
         button.AutoEllipsis = false;
 
-        // All main UI buttons share one geometry. AutoSize + a minimum height is DPI-safe:
-        // text can grow when Windows scaling requires it, but buttons never collapse below 40 px.
         if (button.Dock != DockStyle.Fill)
         {
             button.AutoSize = true;
             button.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         }
-        button.Padding = new Padding(14, 5, 14, 5);
+        button.Padding = new Padding(14, 6, 14, 6);
         button.Margin = new Padding(4, 4, 8, 4);
-        button.MinimumSize = new Size(button.MinimumSize.Width, 40);
+        button.MinimumSize = new Size(button.MinimumSize.Width, 42);
 
         switch (visual)
         {
@@ -55,6 +61,64 @@ internal static class AppUiStyle
                 button.ForeColor = Color.FromArgb(30, 41, 59);
                 button.FlatAppearance.BorderColor = Color.FromArgb(148, 163, 184);
                 break;
+        }
+    }
+
+    private static void BindResponsiveFlows(Control root)
+    {
+        foreach (var flow in FindAll<FlowLayoutPanel>(root)
+                     .Where(x => x.Controls.OfType<Button>().Any()))
+        {
+            if (!ResponsiveFlows.TryGetValue(flow, out var state))
+            {
+                state = new FlowLayoutState();
+                ResponsiveFlows.Add(flow, state);
+                flow.SizeChanged += (_, _) => ScheduleFlowReflow(flow, state);
+                flow.Layout += (_, _) => ScheduleFlowReflow(flow, state);
+                flow.ControlAdded += (_, _) => ScheduleFlowReflow(flow, state);
+                flow.ControlRemoved += (_, _) => ScheduleFlowReflow(flow, state);
+                flow.HandleCreated += (_, _) => ScheduleFlowReflow(flow, state);
+            }
+
+            // AutoSize FlowLayoutPanel can grow horizontally beyond its visible parent.
+            // Constrain width with Dock and calculate only the required wrapped height.
+            flow.WrapContents = true;
+            flow.AutoScroll = false;
+            flow.AutoSize = false;
+            if (flow.Dock == DockStyle.Fill && flow.Parent is GroupBox)
+                flow.Dock = DockStyle.Top;
+            ScheduleFlowReflow(flow, state);
+        }
+    }
+
+    private static void ScheduleFlowReflow(FlowLayoutPanel flow, FlowLayoutState state)
+    {
+        if (flow.IsDisposed || state.Pending || !flow.IsHandleCreated) return;
+        state.Pending = true;
+        try
+        {
+            flow.BeginInvoke((Action)(() =>
+            {
+                state.Pending = false;
+                if (flow.IsDisposed) return;
+
+                flow.PerformLayout();
+                var bottom = flow.Padding.Top;
+                foreach (Control child in flow.Controls)
+                {
+                    if (!child.Visible) continue;
+                    bottom = Math.Max(bottom, child.Bottom + child.Margin.Bottom);
+                }
+
+                var desired = Math.Max(1, bottom + flow.Padding.Bottom + 2);
+                if (flow.Height != desired)
+                    flow.Height = desired;
+                flow.Parent?.PerformLayout();
+            }));
+        }
+        catch
+        {
+            state.Pending = false;
         }
     }
 
