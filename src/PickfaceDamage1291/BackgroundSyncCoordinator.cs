@@ -94,7 +94,7 @@ internal static class BackgroundSyncCoordinator
             Interlocked.Exchange(ref _busy, 1);
             try
             {
-                var progress = new Progress<int>(value =>
+                var progress = new InlineProgress<int>(value =>
                     Publish(new BackgroundSyncState(
                         reportId,
                         report.Sku,
@@ -132,5 +132,10 @@ internal static class BackgroundSyncCoordinator
     private static void Publish(BackgroundSyncState state)
     {
         try { StateChanged?.Invoke(state); } catch { }
+    }
+
+    private sealed class InlineProgress<T>(Action<T> callback) : IProgress<T>
+    {
+        public void Report(T value) => callback(value);
     }
 }
