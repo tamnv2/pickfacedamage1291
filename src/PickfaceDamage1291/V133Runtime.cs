@@ -110,7 +110,30 @@ internal static class EntryInputRules
         {
             if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar) && e.KeyChar != '.') e.Handled = true;
         };
-        box.TextChanged += (_, _) => Sanitize(box, c => char.IsDigit(c) || c == '.');
+        box.Enter += (_, _) =>
+        {
+            var editable = LocationNormalizer.ToEditableInput(box.Text);
+            if (string.Equals(editable, box.Text, StringComparison.Ordinal)) return;
+            box.Text = editable;
+            box.SelectionStart = box.TextLength;
+        };
+        box.TextChanged += (_, _) => SanitizeLocation(box);
+    }
+
+    private static void SanitizeLocation(TextBox box)
+    {
+        if (box.IsDisposed) return;
+        var original = box.Text;
+
+        // Canonical values are assigned by the application after validation or loaded from stored records.
+        // A focused textbox is always an editing surface, so pasted text is still reduced to digits/dots.
+        if (!box.Focused && LocationNormalizer.IsCanonicalStoredValue(original)) return;
+
+        var cleaned = new string(original.Where(c => char.IsDigit(c) || c == '.').ToArray());
+        if (string.Equals(original, cleaned, StringComparison.Ordinal)) return;
+        var caret = Math.Min(box.SelectionStart, cleaned.Length);
+        box.Text = cleaned;
+        box.SelectionStart = caret;
     }
 
     private static void Sanitize(TextBox box, Func<char, bool> allowed)

@@ -8,25 +8,35 @@ internal static partial class LocationNormalizer
     [GeneratedRegex(@"^(\d{1,2})\s*\.\s*(\d{1,2})(?:\s*\.\s*(\d{1,2}))?$", RegexOptions.CultureInvariant)]
     private static partial Regex PositionRegex();
 
+    [GeneratedRegex(@"^(?:LTA \d{2}\.\d{2}|Shelving \d{2}\.\d{2}\.\d{2})$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CanonicalPositionRegex();
+
+    public static bool IsCanonicalStoredValue(string? raw)
+        => CanonicalPositionRegex().IsMatch((raw ?? string.Empty).Trim());
+
+    public static string ToEditableInput(string? raw)
+    {
+        var text = (raw ?? string.Empty).Trim();
+        if (text.StartsWith("LTA ", StringComparison.OrdinalIgnoreCase)) return text[4..].Trim();
+        if (text.StartsWith("Shelving ", StringComparison.OrdinalIgnoreCase)) return text[9..].Trim();
+        return text;
+    }
+
     public static bool TryNormalize(string? raw, out string normalized, out string error)
     {
         normalized = string.Empty;
         error = string.Empty;
-        var text = (raw ?? string.Empty).Trim();
+        var text = ToEditableInput(raw);
         if (text.Length == 0)
         {
             error = "Chưa nhập vị trí phát hiện hư hỏng.";
             return false;
         }
 
-        // Backward compatibility only for records created by earlier versions.
-        if (text.StartsWith("LTA ", StringComparison.OrdinalIgnoreCase)) text = text[4..].Trim();
-        else if (text.StartsWith("Shelving ", StringComparison.OrdinalIgnoreCase)) text = text[9..].Trim();
-
         var match = PositionRegex().Match(text);
         if (!match.Success)
         {
-            error = "Vị trí chỉ được nhập số và dấu chấm, đúng dạng xx.yy hoặc xx.yy.zz. Ví dụ: 1.2 → 01.02; 1.2.3 → 01.02.03.";
+            error = "Vị trí chỉ được nhập số và dấu chấm, đúng dạng xx.yy (LTA) hoặc xx.yy.zz (Shelving). Ví dụ: 1.2 → LTA 01.02; 1.2.3 → Shelving 01.02.03.";
             return false;
         }
 
@@ -40,17 +50,17 @@ internal static partial class LocationNormalizer
 
         if (!match.Groups[3].Success)
         {
-            normalized = $"{a:00}.{b:00}";
+            normalized = $"LTA {a:00}.{b:00}";
             return true;
         }
 
         if (!int.TryParse(match.Groups[3].Value, out var c) || c is < 0 or > 99)
         {
-            error = "Vị trí không hợp lệ.";
+            error = "Vị trí Shelving không hợp lệ.";
             return false;
         }
 
-        normalized = $"{a:00}.{b:00}.{c:00}";
+        normalized = $"Shelving {a:00}.{b:00}.{c:00}";
         return true;
     }
 }
