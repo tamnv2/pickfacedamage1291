@@ -190,8 +190,6 @@ internal static class FirebaseClient
         string? sessionId = null,
         CancellationToken ct = default)
     {
-        if (session.OfflineMode) return;
-        await EnsureFreshAsync(session, ct);
         var eventId = Guid.NewGuid().ToString("N");
         var entry = new FirebaseAuditEntry
         {
@@ -205,7 +203,45 @@ internal static class FirebaseClient
             ServerTime = new Dictionary<string, string> { [".sv"] = "timestamp" },
             Details = details
         };
-        using var response = await Http.PutAsync(DbUrl($"audit/{eventId}", session.IdToken), JsonContent(entry), ct);
+
+        AuditOutboxStore.Enqueue(entry);
+        if (session.OfflineMode) return;
+
+        try
+        {
+            await EnsureFreshAsync(session, ct);
+            await UploadAuditEntryAsync(session, entry, ct);
+            AuditOutboxStore.Delete(entry.EventId);
+        }
+        catch
+        {
+            // Keep the event in the local outbox. Audit transport must not break the business action.
+        }
+    }
+
+    public static async Task FlushAuditOutboxAsync(FirebaseSession session, CancellationToken ct = default)
+    {
+        if (session.OfflineMode) return;
+        await EnsureFreshAsync(session, ct);
+        foreach (var entry in AuditOutboxStore.List(500))
+        {
+            if (!string.Equals(entry.Uid, session.Uid, StringComparison.Ordinal)) continue;
+            try
+            {
+                entry.ServerTime = new Dictionary<string, string> { [".sv"] = "timestamp" };
+                await UploadAuditEntryAsync(session, entry, ct);
+                AuditOutboxStore.Delete(entry.EventId);
+            }
+            catch
+            {
+                break;
+            }
+        }
+    }
+
+    private static async Task UploadAuditEntryAsync(FirebaseSession session, FirebaseAuditEntry entry, CancellationToken ct)
+    {
+        using var response = await Http.PutAsync(DbUrl($"audit/{entry.EventId}", session.IdToken), JsonContent(entry), ct);
         var body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException(ToFriendlyDatabaseError(response.StatusCode, body));
@@ -383,7 +419,7 @@ internal static class FirebaseClient
             if (message.StartsWith("INVALID_LOGIN_CREDENTIALS", StringComparison.OrdinalIgnoreCase) ||
                 message.StartsWith("INVALID_PASSWORD", StringComparison.OrdinalIgnoreCase) ||
                 message.StartsWith("EMAIL_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
-                return "Email hoặc mật khẩu không đúng.";
+                return "Tài khoản hoặc mật khẩu không đúng.";
             if (message.StartsWith("USER_DISABLED", StringComparison.OrdinalIgnoreCase))
                 return "Tài khoản Authentication đã bị vô hiệu hóa.";
             if (message.StartsWith("EMAIL_EXISTS", StringComparison.OrdinalIgnoreCase))
