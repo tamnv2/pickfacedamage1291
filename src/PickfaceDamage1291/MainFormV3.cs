@@ -213,11 +213,11 @@ internal sealed class MainForm : Form
         var top = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, Padding = new Padding(12), WrapContents = true };
         var refresh = NewButton("Làm mới");
         var sync = NewButton("Đồng bộ lại");
-        var edit = NewButton("Chỉnh sửa phiếu (ADMIN)");
+        var edit = NewButton("Chỉnh sửa phiếu");
         var selectAll = NewButton("Chọn tất cả");
         var clearSelection = NewButton("Bỏ chọn");
         var delete = NewButton("Xoá phiếu đã chọn (ADMIN)");
-        var export = NewButton("Xuất Excel — sẽ cập nhật logic");
+        var export = NewButton("Xuất Excel");
         var isAdmin = AppSession.Current?.Profile.IsAdmin == true;
 
         refresh.Click += (_, _) => RefreshReports();
@@ -230,9 +230,9 @@ internal sealed class MainForm : Form
         };
         clearSelection.Click += (_, _) => _reportGrid.ClearSelection();
         delete.Click += async (_, _) => await DeleteSelectedReportsAsync();
-        export.Click += (_, _) => MessageBox.Show(this, "Chức năng xuất Excel đang giữ chỗ và sẽ cập nhật theo logic OWNER chốt sau.", "Thông báo");
+        export.Click += async (_, _) => await ExportReportsAsync();
 
-        edit.Visible = isAdmin;
+        edit.Visible = true;
         selectAll.Visible = isAdmin;
         clearSelection.Visible = isAdmin;
         delete.Visible = isAdmin;
@@ -697,9 +697,9 @@ internal sealed class MainForm : Form
     private async Task EditSelectedReportAsync()
     {
         var session = AppSession.Current;
-        if (session is null || !session.Profile.IsAdmin)
+        if (session is null)
         {
-            MessageBox.Show(this, "Chỉ ADMIN được chỉnh sửa phiếu đã nhập.", "Không có quyền");
+            MessageBox.Show(this, "Chưa đăng nhập ứng dụng.", "Không có phiên");
             return;
         }
         if (_reportGrid.SelectedRows.Count == 0)
@@ -710,6 +710,12 @@ internal sealed class MainForm : Form
         var id = Convert.ToString(_reportGrid.SelectedRows[0].Cells["ReportId"].Value) ?? string.Empty;
         var before = Database.GetReportById(id);
         if (before is null) { MessageBox.Show(this, "Không tìm thấy phiếu local.", "Dữ liệu đã thay đổi"); return; }
+        var ownsReport = !string.IsNullOrWhiteSpace(before.CreatedBy) && string.Equals(before.CreatedBy, session.Profile.Username, StringComparison.OrdinalIgnoreCase);
+        if (!session.Profile.IsAdmin && !ownsReport)
+        {
+            MessageBox.Show(this, $"Phiếu này do tài khoản {(string.IsNullOrWhiteSpace(before.CreatedBy) ? "-" : before.CreatedBy)} tạo. USER chỉ được sửa phiếu do chính mình tạo; ADMIN được sửa mọi phiếu.", "Không có quyền sửa", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         var beforeImages = Database.GetImages(id);
         using var dialog = new DamageReportEditDialog(before, beforeImages);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
@@ -727,7 +733,7 @@ internal sealed class MainForm : Form
             }
             catch (Exception auditEx)
             {
-                MessageBox.Show(this, "Phiếu local đã sửa nhưng chưa ghi được audit Firebase. Phiếu vẫn chờ đồng bộ Google.\n\n" + auditEx.Message, "Cảnh báo audit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, "Phiếu local đã sửa nhưng lịch sử thay đổi chưa gửi được Google Sheet. Phiếu vẫn chờ đồng bộ Google.\n\n" + auditEx.Message, "Cảnh báo lịch sử", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             if (GoogleService.IsConnected())
             {
@@ -872,6 +878,53 @@ internal sealed class MainForm : Form
         "CONFLICT" => "Xung đột",
         _ => "Chờ đồng bộ"
     };
+
+    private async Task ExportReportsAsync()
+    {
+        try
+        {
+            if (GoogleService.IsConnected())
+            {
+                try
+                {
+                    _reportStatus.Text = "Đang nhận dữ liệu mới nhất trước khi xuất Excel...";
+                    await CloudSyncService.PullSharedDataAsync(new Progress<string>(s => _reportStatus.Text = s));
+                    RefreshReports();
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Exception("EXPORT_PRE_SYNC_FAILED", ex);
+                    var answer = MessageBox.Show(this,
+                        "Không nhận được dữ liệu mới nhất từ Google trước khi xuất. Nếu tiếp tục, file Excel chỉ phản ánh dữ liệu hiện có trên máy này.\n\n" + ex.Message + "\n\nTiếp tục xuất dữ liệu local?",
+                        "Đồng bộ trước khi xuất chưa hoàn tất", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    if (answer != DialogResult.Yes) return;
+                }
+            }
+            else
+            {
+                var answer = MessageBox.Show(this,
+                    "Ứng dụng đang offline/chưa kết nối Google. File Excel chỉ phản ánh dữ liệu hiện có trên máy này. Tiếp tục?",
+                    "Xuất dữ liệu local", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (answer != DialogResult.Yes) return;
+            }
+
+            var progress = new Progress<string>(s => _reportStatus.Text = s);
+            var result = await DamageReportExportService.ExportAsync(this, progress);
+            if (result is null) return;
+            _reportStatus.Text = $"Đã xuất {result.ReportCount:N0} phiếu.";
+            var imageNote = result.MissingImages > 0 ? $"\nKhông tải/nhúng được: {result.MissingImages:N0} ảnh." : string.Empty;
+            MessageBox.Show(this, $"Đã xuất {result.ReportCount:N0} phiếu và {result.ImageCount:N0} ảnh.\n\n{result.Path}{imageNote}", "Xuất Excel hoàn tất", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Exception("EXPORT_EXCEL_FAILED", ex);
+            MessageBox.Show(this, ex.Message, "Không xuất được Excel", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            RefreshReports();
+        }
+    }
 
     private async Task SyncPendingAsync()
     {

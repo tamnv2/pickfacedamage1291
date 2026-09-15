@@ -9,6 +9,8 @@ const CFG = Object.freeze({
 });
 
 const LOGIN_ALIAS_PREFIX = 'LOGIN_ALIAS_';
+const GATEWAY_VERSION = '1.4.1';
+const GATEWAY_CAPABILITIES = Object.freeze(['pull_changes','push_products','pull_products','append_audit','list_audit','delete_audit_range','upload_log','sync_report','get_image']);
 
 const HEADERS = [
   'ID', 'Ngày phát hiện', 'Giờ phát hiện', 'Ca', 'SKU', 'Tên sản phẩm', 'Vị trí phát hiện',
@@ -22,6 +24,10 @@ function doPost(e) {
     const request = JSON.parse(e.postData.contents);
     const action = String(request.action || '');
     const payload = request.payload || {};
+
+    if (action === 'gateway_info') {
+      return json_({ ok: true, version: GATEWAY_VERSION, capabilities: GATEWAY_CAPABILITIES });
+    }
 
     if (action === 'login_by_username') {
       return json_(loginByUsername_(String(request.username || ''), String(request.password || '')));
@@ -47,7 +53,7 @@ function doPost(e) {
     if (action === 'verify') {
       verifyFixedResources_();
       if (payload.write_headers === true) { ensureHeaders_(); ensureV140Sheets_(); }
-      return json_({ ok: true, uid: auth.uid, username: auth.profile.username || '' });
+      return json_({ ok: true, uid: auth.uid, username: auth.profile.username || '', version: GATEWAY_VERSION, capabilities: GATEWAY_CAPABILITIES });
     }
 
     if (action === 'get_image') {

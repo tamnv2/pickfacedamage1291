@@ -6,7 +6,7 @@ namespace PickfaceDamage1291;
 
 internal static class AccountSelfService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient Http = NetworkHttpClientFactory.Create(TimeSpan.FromSeconds(30), "PickfaceDamage1291-Account");
 
     public static async Task VerifyCurrentPasswordAsync(
         FirebaseSession session,

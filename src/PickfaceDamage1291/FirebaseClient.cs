@@ -8,7 +8,7 @@ namespace PickfaceDamage1291;
 
 internal static class FirebaseClient
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient Http = NetworkHttpClientFactory.Create(TimeSpan.FromSeconds(30), "PickfaceDamage1291-Firebase");
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true

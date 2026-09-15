@@ -93,18 +93,20 @@ internal sealed class DamageReportEditDialog : Form
     private Control BuildImageSection()
     {
         var box = Section("Hình ảnh — tối đa 5 ảnh");
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(12) };
+        var layout = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, ColumnCount = 2, RowCount = 2, Padding = new Padding(12) };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 180));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 200));
 
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true };
-        var add = new Button { Text = "+ Thêm ảnh", AutoSize = true, Height = 34 };
-        var remove = new Button { Text = "Bỏ ảnh đã chọn", AutoSize = true, Height = 34 };
+        var actions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, WrapContents = true };
+        var add = new Button { Text = "+ Thêm ảnh", AutoSize = true, MinimumSize = new Size(0, 40), Padding = new Padding(12, 4, 12, 4) };
+        var replace = new Button { Text = "Thay ảnh đã chọn", AutoSize = true, MinimumSize = new Size(0, 40), Padding = new Padding(12, 4, 12, 4) };
+        var remove = new Button { Text = "Bỏ ảnh đã chọn", AutoSize = true, MinimumSize = new Size(0, 40), Padding = new Padding(12, 4, 12, 4) };
         add.Click += (_, _) => AddImages();
+        replace.Click += (_, _) => ReplaceImage();
         remove.Click += (_, _) => RemoveImage();
-        actions.Controls.AddRange([add, remove]);
+        actions.Controls.AddRange([add, replace, remove]);
         layout.Controls.Add(actions, 0, 0);
         layout.SetColumnSpan(actions, 2);
 
@@ -126,7 +128,7 @@ internal sealed class DamageReportEditDialog : Form
         MaximumSize = new Size(820, 0),
         Padding = new Padding(4, 12, 4, 12),
         ForeColor = Color.DimGray,
-        Text = "Khi lưu, report_id và thời gian/người tạo gốc được giữ nguyên. Hệ thống tăng phiên bản, ghi ADMIN sửa, thời gian sửa và audit trước → sau. Ảnh bị bỏ khỏi phiếu không bị xóa vĩnh viễn khỏi Google Drive."
+        Text = "Khi lưu, report_id và thời gian/người tạo gốc được giữ nguyên. Hệ thống tăng phiên bản, ghi người sửa, thời gian sửa và lịch sử trước → sau. Ảnh bị bỏ/thay khỏi phiếu không bị xóa vĩnh viễn khỏi Google Drive."
     };
 
     private Control BuildActions()
@@ -213,24 +215,73 @@ internal sealed class DamageReportEditDialog : Form
         RefreshImages();
     }
 
+    private void ReplaceImage()
+    {
+        var index = _imageList.SelectedIndex;
+        if (index < 0 || index >= _images.Count)
+        {
+            MessageBox.Show(this, "Chọn ảnh cần thay.", "Chưa chọn ảnh", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new OpenFileDialog { Filter = "Hình ảnh|*.jpg;*.jpeg;*.png;*.heic;*.webp", Multiselect = false, Title = "Chọn ảnh thay thế" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        string newHash;
+        try { newHash = ImageHashService.Sha256File(dialog.FileName); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Không đọc được ảnh", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var old = _images[index];
+        string oldHash = string.Empty;
+        if (File.Exists(old.LocalPath))
+        {
+            try { oldHash = ImageHashService.Sha256File(old.LocalPath); } catch { }
+        }
+        if (string.IsNullOrWhiteSpace(oldHash)) oldHash = SyncCacheStore.GetImageHash(old.ReportId, old.Sequence);
+
+        if (!string.Equals(oldHash, newHash, StringComparison.OrdinalIgnoreCase) && _hashes.Contains(newHash))
+        {
+            MessageBox.Show(this, "Ảnh thay thế đã tồn tại trong phiếu.", "Ảnh trùng", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var folder = AppPaths.GetDraftImageFolder(_original.ReportId);
+        var ext = Path.GetExtension(dialog.FileName).ToLowerInvariant();
+        var target = Path.Combine(folder, $"replace_{Guid.NewGuid():N}_{newHash[..12]}{ext}");
+        File.Copy(dialog.FileName, target, false);
+        _newFiles.Add(target);
+
+        if (!string.IsNullOrWhiteSpace(oldHash)) _hashes.Remove(oldHash);
+        _hashes.Add(newHash);
+        _images[index] = new DamageImage(_original.ReportId, old.Sequence, target, null, null);
+        RefreshImages(index);
+    }
+
     private void RemoveImage()
     {
         var index = _imageList.SelectedIndex;
         if (index < 0 || index >= _images.Count) return;
         var item = _images[index];
         _images.RemoveAt(index);
+        string oldHash = string.Empty;
         if (File.Exists(item.LocalPath))
-            try { _hashes.Remove(ImageHashService.Sha256File(item.LocalPath)); } catch { }
+            try { oldHash = ImageHashService.Sha256File(item.LocalPath); } catch { }
+        if (string.IsNullOrWhiteSpace(oldHash)) oldHash = SyncCacheStore.GetImageHash(item.ReportId, item.Sequence);
+        if (!string.IsNullOrWhiteSpace(oldHash)) _hashes.Remove(oldHash);
         for (var i = 0; i < _images.Count; i++) _images[i] = _images[i] with { Sequence = i + 1 };
-        RefreshImages();
+        RefreshImages(Math.Min(index, _images.Count - 1));
     }
 
-    private void RefreshImages()
+    private void RefreshImages(int preferredIndex = 0)
     {
         _imageList.Items.Clear();
         foreach (var image in _images)
             _imageList.Items.Add($"Ảnh {image.Sequence}: {Path.GetFileName(image.LocalPath)}{(string.IsNullOrWhiteSpace(image.DriveFileId) ? " (local)" : "")}");
-        if (_imageList.Items.Count > 0) _imageList.SelectedIndex = 0;
+        if (_imageList.Items.Count > 0) _imageList.SelectedIndex = Math.Clamp(preferredIndex, 0, _imageList.Items.Count - 1);
         else { _preview.Image?.Dispose(); _preview.Image = null; }
     }
 
