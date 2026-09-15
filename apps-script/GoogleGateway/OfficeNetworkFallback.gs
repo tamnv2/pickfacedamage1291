@@ -1,7 +1,7 @@
-// Office-network fallback transport for active_operator only.
+// Office-network fallback transport for the minimum Firebase RTDB data required by the desktop app.
 // The desktop app uses this endpoint only after direct Firebase RTDB access fails.
-// Scope is deliberately fixed to /active_operator; arbitrary Firebase paths are not accepted.
-// Firebase Security Rules validate the ID token and remain the final authorization authority.
+// Scope is deliberately fixed to active_operator and one authenticated user profile; arbitrary
+// Firebase paths are not accepted. Firebase Security Rules remain the authorization authority.
 
 function doGet(e) {
   try {
@@ -18,13 +18,25 @@ function doGet(e) {
       return json_({ ok: true, server_now: Date.now() });
     }
 
+    if (op === 'profile') {
+      const uid = String(p.uid || '').trim();
+      if (!uid || /[.#$\[\]\/]/.test(uid)) throw new Error('UID Firebase không hợp lệ.');
+      const response = UrlFetchApp.fetch(profileUrl_(uid, idToken), {
+        method: 'get',
+        muteHttpExceptions: true
+      });
+      assertFirebaseProxyResponse_(response, 'đọc hồ sơ');
+      const text = response.getContentText() || 'null';
+      return json_({ ok: true, value: JSON.parse(text) });
+    }
+
     if (op === 'get') {
       const response = UrlFetchApp.fetch(operatorUrl_(idToken), {
         method: 'get',
         headers: { 'X-Firebase-ETag': 'true' },
         muteHttpExceptions: true
       });
-      assertOperatorProxyResponse_(response, 'đọc');
+      assertFirebaseProxyResponse_(response, 'đọc active_operator');
       const headers = response.getAllHeaders ? response.getAllHeaders() : {};
       const etag = String(headers.ETag || headers.Etag || headers.etag || '*');
       const text = response.getContentText() || 'null';
@@ -32,8 +44,8 @@ function doGet(e) {
     }
 
     if (op === 'put') {
-      // Do not trust the client-side UID. Firebase Security Rules verify auth.uid, role, active
-      // and the complete lease shape before accepting this write.
+      // Do not trust client-side role/UID assertions. Firebase Security Rules verify auth.uid,
+      // role, active state and the complete lease shape before accepting this write.
       const value = decodeOperatorPayload_(String(p.payload_b64 || ''));
       if (!value || !String(value.uid || '')) throw new Error('Dữ liệu active_operator không hợp lệ.');
       const response = UrlFetchApp.fetch(operatorUrl_(idToken), {
@@ -44,7 +56,7 @@ function doGet(e) {
         muteHttpExceptions: true
       });
       if (response.getResponseCode() === 412) return json_({ ok: true, applied: false });
-      assertOperatorProxyResponse_(response, 'ghi');
+      assertFirebaseProxyResponse_(response, 'ghi active_operator');
       return json_({ ok: true, applied: true });
     }
 
@@ -55,11 +67,11 @@ function doGet(e) {
         muteHttpExceptions: true
       });
       if (response.getResponseCode() === 412) return json_({ ok: true, applied: false });
-      assertOperatorProxyResponse_(response, 'xoá');
+      assertFirebaseProxyResponse_(response, 'xoá active_operator');
       return json_({ ok: true, applied: true });
     }
 
-    throw new Error('Operator proxy operation không được hỗ trợ.');
+    throw new Error('Firebase fallback operation không được hỗ trợ.');
   } catch (err) {
     return json_({ ok: false, error: cleanError_(err) });
   }
@@ -69,6 +81,10 @@ function operatorUrl_(idToken) {
   return CFG.FIREBASE_DB_URL + '/active_operator.json?auth=' + encodeURIComponent(idToken);
 }
 
+function profileUrl_(uid, idToken) {
+  return CFG.FIREBASE_DB_URL + '/users/' + encodeURIComponent(uid) + '.json?auth=' + encodeURIComponent(idToken);
+}
+
 function decodeOperatorPayload_(payloadB64) {
   if (!payloadB64) throw new Error('Thiếu dữ liệu active_operator.');
   const bytes = Utilities.base64Decode(payloadB64);
@@ -76,9 +92,9 @@ function decodeOperatorPayload_(payloadB64) {
   return JSON.parse(json || 'null');
 }
 
-function assertOperatorProxyResponse_(response, actionLabel) {
+function assertFirebaseProxyResponse_(response, actionLabel) {
   const code = response.getResponseCode();
   if (code >= 200 && code < 300) return;
   const body = String(response.getContentText() || '');
-  throw new Error('Firebase RTDB không cho phép ' + actionLabel + ' active_operator qua gateway (HTTP ' + code + '). ' + body.slice(0, 200));
+  throw new Error('Firebase RTDB không cho phép ' + actionLabel + ' qua gateway (HTTP ' + code + '). ' + body.slice(0, 200));
 }
