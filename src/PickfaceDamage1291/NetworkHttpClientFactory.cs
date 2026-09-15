@@ -1,29 +1,52 @@
 using System.IO.Compression;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
 namespace PickfaceDamage1291;
 
 internal static class NetworkHttpClientFactory
 {
+    private static long _lastNetworkChangeUtcTicks;
+
+    public static event Action? NetworkChanged;
+
+    static NetworkHttpClientFactory()
+    {
+        NetworkChange.NetworkAddressChanged += (_, _) => MarkNetworkChanged("address");
+        NetworkChange.NetworkAvailabilityChanged += (_, e) => MarkNetworkChanged(e.IsAvailable ? "available" : "unavailable");
+    }
+
     public static HttpClient Create(TimeSpan timeout, string userAgent)
     {
         var proxy = WebRequest.DefaultWebProxy;
         if (proxy is not null)
             proxy.Credentials = CredentialCache.DefaultCredentials;
 
-        var handler = new HttpClientHandler
+        // SocketsHttpHandler keeps HttpClient reuse fast, while short connection lifetimes
+        // prevent a laptop from being pinned to stale DNS/proxy/TCP state after Wi-Fi/LAN changes.
+        var handler = new SocketsHttpHandler
         {
             UseProxy = true,
             Proxy = proxy,
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials,
-            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
+            PooledConnectionLifetime = TimeSpan.FromSeconds(30),
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(10),
+            ConnectTimeout = TimeSpan.FromSeconds(15)
         };
 
         var client = new HttpClient(handler, disposeHandler: true) { Timeout = timeout };
         if (!string.IsNullOrWhiteSpace(userAgent))
             client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
         return client;
+    }
+
+    public static bool NetworkChangedRecently(TimeSpan window)
+    {
+        var ticks = Interlocked.Read(ref _lastNetworkChangeUtcTicks);
+        if (ticks <= 0) return false;
+        var elapsed = DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc);
+        return elapsed >= TimeSpan.Zero && elapsed <= window;
     }
 
     public static async Task<T> RetryAsync<T>(Func<Task<T>> action, int attempts = 3, CancellationToken ct = default)
@@ -63,6 +86,24 @@ internal static class NetworkHttpClientFactory
             return $"Không kết nối được tới {target}: {ex.Message}";
 
         return ex.Message;
+    }
+
+    private static void MarkNetworkChanged(string state)
+    {
+        Interlocked.Exchange(ref _lastNetworkChangeUtcTicks, DateTime.UtcNow.Ticks);
+        try
+        {
+            AppLog.Info("NETWORK_CHANGED", "Windows báo thay đổi kết nối mạng.", new Dictionary<string, object?>
+            {
+                ["state"] = state
+            });
+        }
+        catch
+        {
+            // Network notifications can arrive before logging is initialized.
+        }
+
+        try { NetworkChanged?.Invoke(); } catch { }
     }
 
     private static T? FindInner<T>(Exception ex) where T : Exception
