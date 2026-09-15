@@ -78,7 +78,15 @@ internal static class DamageReportExportService
             ws.Cell(row, 2).Value = report.Sku;
             ws.Cell(row, 3).Value = report.ProductName;
             ws.Cell(row, 4).Value = report.Location;
-            ws.Cell(row, 5).Value = $"{report.OccurredDate:dd/MM/yyyy} {report.Hour:00}:{report.Minute:00}";
+
+            // This column must represent the business occurrence fields entered by the user,
+            // never CreatedAt/SyncedAt. Write a real Excel DateTime so Excel cannot reinterpret
+            // the displayed text using another locale or timestamp source.
+            var detectedAt = BuildDetectedAt(report);
+            var detectedCell = ws.Cell(row, 5);
+            detectedCell.Value = detectedAt;
+            detectedCell.Style.DateFormat.Format = "dd/MM/yyyy HH:mm";
+
             ws.Cell(row, 6).Value = decimal.Truncate(report.Quantity);
             ws.Cell(row, 7).Value = report.BaseUnit;
 
@@ -169,6 +177,25 @@ internal static class DamageReportExportService
         wb.SaveAs(save.FileName);
         progress?.Report("Đã xuất Excel.");
         return new DamageExportResult(save.FileName, reports.Count, totalImages, missingImages);
+    }
+
+    private static DateTime BuildDetectedAt(DamageReport report)
+    {
+        if (report.Hour is < 0 or > 23 || report.Minute is < 0 or > 59)
+        {
+            throw new InvalidDataException(
+                $"Phiếu {report.ReportId} / SKU {report.Sku} có Giờ phát hiện không hợp lệ: {report.Hour}:{report.Minute:00}. " +
+                "Đã dừng xuất để không tạo file sai thời gian.");
+        }
+
+        return new DateTime(
+            report.OccurredDate.Year,
+            report.OccurredDate.Month,
+            report.OccurredDate.Day,
+            report.Hour,
+            report.Minute,
+            0,
+            DateTimeKind.Unspecified);
     }
 
     private static void ConfigureSheet(IXLWorksheet ws)
