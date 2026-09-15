@@ -47,6 +47,14 @@ internal static class BackgroundSyncCoordinator
         return true;
     }
 
+    public static int EnqueuePending()
+    {
+        var count = 0;
+        foreach (var report in Database.GetPendingReports().OrderBy(x => x.CreatedAt))
+            if (Enqueue(report.ReportId)) count++;
+        return count;
+    }
+
     public static int EnqueueAllLocal()
     {
         var count = 0;
@@ -86,26 +94,25 @@ internal static class BackgroundSyncCoordinator
             Interlocked.Exchange(ref _busy, 1);
             try
             {
-                var syncTask = GoogleService.SyncReportAsync(report);
-                var percent = 8;
-                Publish(new BackgroundSyncState(reportId, report.Sku, percent, $"Đang đồng bộ SKU {report.Sku}...", QueueCount, true, false, false));
+                var progress = new Progress<int>(value =>
+                    Publish(new BackgroundSyncState(
+                        reportId,
+                        report.Sku,
+                        Math.Clamp(value, 0, 100),
+                        $"Đang đồng bộ SKU {report.Sku}...",
+                        QueueCount,
+                        true,
+                        false,
+                        false)));
 
-                while (!syncTask.IsCompleted)
-                {
-                    var completed = await Task.WhenAny(syncTask, Task.Delay(500));
-                    if (completed == syncTask) break;
-                    percent = Math.Min(90, percent + (percent < 55 ? 7 : 3));
-                    Publish(new BackgroundSyncState(reportId, report.Sku, percent, $"Đang đồng bộ SKU {report.Sku}...", QueueCount, true, false, false));
-                }
-
-                await syncTask;
+                await GoogleService.SyncReportAsync(report, progress);
                 Publish(new BackgroundSyncState(reportId, report.Sku, 100, $"Đã đồng bộ SKU {report.Sku}.", Math.Max(0, QueueCount - 1), true, true, false));
                 NotificationCenter.Show(null, $"Đã đồng bộ SKU {report.Sku} lên Google.", "Đồng bộ hoàn tất", MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
                 Publish(new BackgroundSyncState(reportId, report.Sku, 100, $"Đồng bộ SKU {report.Sku} chưa thành công.", Math.Max(0, QueueCount - 1), true, true, true));
-                NotificationCenter.Show(null, $"Phiếu SKU {report.Sku} vẫn được giữ local. {ex.Message}", "Chưa đồng bộ được", MessageBoxIcon.Warning);
+                NotificationCenter.Show(null, $"Phiếu SKU {report.Sku} vẫn được giữ trên máy. {ex.Message}", "Chưa đồng bộ được", MessageBoxIcon.Warning);
             }
             finally
             {
