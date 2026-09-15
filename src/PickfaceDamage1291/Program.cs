@@ -20,20 +20,45 @@ internal static class Program
             return;
         }
 
-        using (var login = new LoginForm())
+        // Runtime metadata is public configuration and is needed before username login.
+        RuntimeConfigService.InitializeAsync().GetAwaiter().GetResult();
+
+        while (true)
         {
-            if (login.ShowDialog() != DialogResult.OK || AppSession.Current is null)
-                return;
+            if (AppSession.Current is null)
+            {
+                var resumed = AutoLoginService.TryResumeAsync().GetAwaiter().GetResult();
+                if (!resumed)
+                {
+                    using var login = new LoginFormV130();
+                    if (login.ShowDialog() != DialogResult.OK || AppSession.Current is null)
+                        return;
+                }
+            }
+
+            var main = new MainForm();
+            SessionUiBinder.Bind(main);
+            V130Runtime.Apply(main);
+            UiRuntimeFixes.Attach(main);
+            Application.Run(main);
+
+            var logoutRequested = V130Runtime.ConsumeLogoutRequested();
+            CleanupSession(main);
+
+            if (logoutRequested)
+            {
+                SecureSessionStore.Clear();
+                continue;
+            }
+
+            if (!LoginPreferencesStore.ShouldPersistSession)
+                SecureSessionStore.Clear();
+            return;
         }
+    }
 
-        if (AppSession.Current?.OfflineMode != true)
-            RuntimeConfigService.InitializeAsync().GetAwaiter().GetResult();
-
-        var main = new MainForm();
-        SessionUiBinder.Bind(main);
-        UiRuntimeFixes.Attach(main);
-        Application.Run(main);
-
+    private static void CleanupSession(MainForm main)
+    {
         var session = AppSession.Current;
         var manager = AppSession.OperatorManager;
         try
