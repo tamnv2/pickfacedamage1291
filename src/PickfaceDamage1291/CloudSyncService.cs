@@ -137,6 +137,27 @@ internal static class CloudSyncService
         }
     }
 
+    public static async Task<(int ReportsPulled, int ReportsDeleted, int ProductsPulled)> PullSharedDataAsync(IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        if (!GoogleService.IsConnected())
+            throw new InvalidOperationException("Cần kết nối online để nhận dữ liệu dùng chung.");
+
+        await Gate.WaitAsync(ct);
+        try
+        {
+            SyncCacheStore.Initialize();
+            progress?.Report("Đang nhận thay đổi phiếu từ Google...");
+            var reports = await PullReportsAsync(progress, ct);
+            progress?.Report("Đang nhận danh mục SKU dùng chung...");
+            var products = await PullProductsAsync(progress, ct);
+            return (reports.Applied, reports.Deleted, products.Pulled);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
     public static async Task<int> PushLocalProductCatalogAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
         if (AppSession.Current?.Profile.IsAdmin != true)

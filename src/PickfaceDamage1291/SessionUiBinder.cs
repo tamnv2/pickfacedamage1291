@@ -91,7 +91,7 @@ internal static class SessionUiBinder
         if (session.OfflineMode)
         {
             send.Enabled = false;
-            if (status is not null) status.Text = "Tạm khóa gửi — ADMIN đang offline nên chưa thể xác minh quyền nhập.";
+            if (status is not null) status.Text = "ADMIN đã đăng nhập. Chỉ tạm khóa nút Gửi vì đang offline nên chưa đọc được trạng thái USER đang nhập.";
             return;
         }
 
@@ -99,7 +99,7 @@ internal static class SessionUiBinder
         {
             try
             {
-                var snapshot = await FirebaseClient.GetActiveOperatorSnapshotAsync(session);
+                var snapshot = await NetworkHttpClientFactory.RetryAsync(() => FirebaseClient.GetActiveOperatorSnapshotAsync(session), attempts: 3);
                 if (form.IsDisposed) return;
                 void Work()
                 {
@@ -110,13 +110,14 @@ internal static class SessionUiBinder
                 }
                 if (form.InvokeRequired) form.BeginInvoke((Action)Work); else Work();
             }
-            catch
+            catch (Exception ex)
             {
+                AppLog.Exception("ADMIN_OPERATOR_VERIFY_FAILED", ex);
                 if (form.IsDisposed) return;
                 void Work()
                 {
                     send.Enabled = false;
-                    if (status is not null) status.Text = "Tạm khóa gửi — chưa xác minh được quyền nhập. Hãy kiểm tra kết nối.";
+                    if (status is not null) status.Text = "ADMIN vẫn có đầy đủ quyền quản trị. Chỉ tạm khóa nút Gửi vì chưa đọc được trạng thái active_operator từ Firebase.";
                 }
                 if (form.InvokeRequired) form.BeginInvoke((Action)Work); else Work();
             }

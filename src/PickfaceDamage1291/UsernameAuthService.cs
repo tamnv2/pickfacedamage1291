@@ -5,7 +5,7 @@ namespace PickfaceDamage1291;
 
 internal static class UsernameAuthService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private static readonly HttpClient Http = NetworkHttpClientFactory.Create(TimeSpan.FromSeconds(20), "PickfaceDamage1291-UsernameAuth");
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public static async Task<FirebaseSession> SignInAsync(string username, string password, CancellationToken ct = default)

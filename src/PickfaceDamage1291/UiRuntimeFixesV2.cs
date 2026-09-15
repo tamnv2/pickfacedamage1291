@@ -275,7 +275,10 @@ internal static class UiRuntimeFixes
                 try
                 {
                     var progress = new Progress<string>(text => SetGoogleHeader(form, "Google: " + text));
-                    await CloudSyncService.SyncNowAsync(progress);
+                    if (session.Profile.IsAdmin || session.Profile.HasPermission("sync_google") || session.Profile.HasPermission("damage_entry"))
+                        await CloudSyncService.SyncNowAsync(progress);
+                    else
+                        await CloudSyncService.PullSharedDataAsync(progress);
                     SetGoogleHeader(form, "Google: đã đồng bộ đa máy");
                 }
                 catch (Exception syncEx)

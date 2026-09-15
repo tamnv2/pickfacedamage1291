@@ -106,6 +106,7 @@ internal static class DamageReportExportService
 
             var added = AddPictures(ws, row, resolved);
             totalImages += added;
+            missingImages += Math.Max(0, resolved.Count - added);
             if (resolved.Count == 0 && Database.GetImages(report.ReportId).Count > 0)
             {
                 ws.Cell(row, ImageColumn).Value = "Không tải được hình ảnh khi xuất.";
@@ -171,7 +172,7 @@ internal static class DamageReportExportService
                 picture.WithSize(width, height);
                 var x = slot.X + Math.Max(0, (slot.Width - width) / 2);
                 var y = slot.Y + Math.Max(0, (slot.Height - height) / 2);
-                picture.MoveTo(ws.Cell(row, ImageColumn).Address, x, y);
+                picture.MoveTo(ws.Cell(row, ImageColumn), x, y);
                 picture.WithPlacement(XLPicturePlacement.MoveAndSize);
                 added++;
             }

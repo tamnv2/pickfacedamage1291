@@ -47,6 +47,30 @@ internal static class GoogleGatewayV140
 {
     private static readonly HttpClient Http = CreateClient();
 
+    public static async Task VerifyCapabilitiesAsync(CancellationToken ct = default)
+    {
+        JsonElement root;
+        try
+        {
+            root = await CallAsync("gateway_info", new { }, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Action không được hỗ trợ", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Google Gateway đang chạy deployment cũ hoặc ứng dụng đang trỏ tới URL /exec cũ. Đây không phải lỗi quyền ADMIN. Hãy cập nhật đúng deployment Apps Script hiện hữu.", ex);
+        }
+
+        var version = Str(root, "version");
+        var capabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (root.TryGetProperty("capabilities", out var node) && node.ValueKind == JsonValueKind.Array)
+            foreach (var item in node.EnumerateArray())
+                if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString())) capabilities.Add(item.GetString()!);
+
+        var required = new[] { "pull_changes", "push_products", "pull_products", "append_audit", "list_audit", "delete_audit_range", "upload_log", "sync_report", "get_image" };
+        var missing = required.Where(x => !capabilities.Contains(x)).ToArray();
+        if (missing.Length > 0)
+            throw new InvalidOperationException($"Google Gateway {(string.IsNullOrWhiteSpace(version) ? "?" : version)} thiếu chức năng: {string.Join(", ", missing)}. Hãy deploy Code.gs v1.4.1 vào đúng deployment /exec đang dùng.");
+    }
+
     public static async Task<ReportChangePage> PullReportChangesAsync(long afterSeq, int limit = 500, CancellationToken ct = default)
     {
         var root = await CallAsync("pull_changes", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);
@@ -342,8 +366,7 @@ internal static class GoogleGatewayV140
 
     private static HttpClient CreateClient()
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromMinutes(4) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PickfaceDamage1291-SyncV140");
+        var client = NetworkHttpClientFactory.Create(TimeSpan.FromMinutes(4), "PickfaceDamage1291-SyncV141");
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         return client;
     }

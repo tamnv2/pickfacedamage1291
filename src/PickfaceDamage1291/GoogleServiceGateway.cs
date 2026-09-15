@@ -26,6 +26,7 @@ internal static class GoogleService
 
     public static async Task VerifyBindingAsync(bool writeHeaders = false)
     {
+        await GoogleGatewayV140.VerifyCapabilitiesAsync();
         var payload = new
         {
             root_folder_id = CloudConfig.DriveRootFolderId,
@@ -323,8 +324,7 @@ internal static class GoogleService
 
     private static HttpClient CreateClient()
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromMinutes(4) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PickfaceDamage1291-GoogleGateway");
+        var client = NetworkHttpClientFactory.Create(TimeSpan.FromMinutes(4), "PickfaceDamage1291-GoogleGateway");
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         return client;
     }
