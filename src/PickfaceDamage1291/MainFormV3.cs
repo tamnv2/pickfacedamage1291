@@ -612,6 +612,15 @@ internal sealed class MainForm : Form
                     await GoogleService.SyncReportAsync(report);
                     synced = true;
                 }
+                catch (DuplicateReportException ex)
+                {
+                    SyncCacheStore.RemoveLocalDuplicate(report.ReportId, ex.ExistingReportId);
+                    MessageBox.Show(this, ex.Message + "\n\nBản ghi local vừa tạo đã được loại để không phát sinh dữ liệu trùng.", "Không tạo phiếu trùng", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (SyncConflictException ex)
+                {
+                    MessageBox.Show(this, ex.Message, "Xung đột đồng bộ", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
                 catch (Exception ex)
                 {
                     MessageBox.Show(this, "Phiếu đã được lưu an toàn trên laptop nhưng chưa đồng bộ được Google.\n\n" + ex.Message, "Đã lưu local - chưa đồng bộ", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -860,6 +869,7 @@ internal sealed class MainForm : Form
         "SYNCING" => "Đang đồng bộ",
         "ERROR" => "Lỗi đồng bộ",
         "OFFLINE_PENDING" => "Chờ online",
+        "CONFLICT" => "Xung đột",
         _ => "Chờ đồng bộ"
     };
 
@@ -867,18 +877,24 @@ internal sealed class MainForm : Form
     {
         if (!GoogleService.IsConnected())
         {
-            MessageBox.Show(this, GoogleService.NeedsReconnect() ? "Phiên Google cũ cần kết nối lại. Vào Cài đặt → Kết nối Google." : "Chưa kết nối Google trên laptop này. Vào Cài đặt → Kết nối Google.", "Chưa kết nối");
+            MessageBox.Show(this, "Chưa kết nối Google dùng chung. Dữ liệu local vẫn được giữ an toàn.", "Chưa kết nối");
             return;
         }
         try
         {
-            _reportStatus.Text = "Đang đồng bộ...";
+            _reportStatus.Text = "Đang đồng bộ hai chiều...";
             var progress = new Progress<string>(s => _reportStatus.Text = s);
-            await GoogleService.SyncAllPendingAsync(progress);
-            MessageBox.Show(this, "Đã xử lý hàng đợi đồng bộ.", "Hoàn tất");
+            var summary = await CloudSyncService.SyncNowAsync(progress);
+            MessageBox.Show(this,
+                $"Đồng bộ hoàn tất.\n\nNhận phiếu: {summary.ReportsPulled:N0}\nGửi phiếu: {summary.ReportsPushed:N0}\nXoá nhận từ máy khác: {summary.ReportsDeleted:N0}\nSKU nhận: {summary.ProductsPulled:N0}\nXung đột: {summary.ReportConflicts:N0}",
+                "Hoàn tất", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Đồng bộ chưa hoàn tất", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-        finally { RefreshReports(); RefreshSettings(); }
+        catch (Exception ex)
+        {
+            AppLog.Exception("MANUAL_SYNC_FAILED", ex);
+            MessageBox.Show(this, ex.Message, "Đồng bộ chưa hoàn tất", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { RefreshReports(); RefreshProducts(); RefreshSettings(); }
     }
 
     private async Task ImportProductsAsync()
@@ -906,10 +922,30 @@ internal sealed class MainForm : Form
             }
             Cursor = Cursors.WaitCursor;
             await Task.Run(() => Database.ApplyImport(preview));
+            SyncCacheStore.MarkProductsDirty();
             Cursor = Cursors.Default;
+            var catalogSynced = false;
             if (AppSession.Current is { } session)
+            {
                 try { await FirebaseClient.AppendAuditAsync(session, "SKU_IMPORT", new { file = Path.GetFileName(dialog.FileName), total = preview.TotalRows, unique = preview.UniqueSkus, added = preview.NewProducts.Count, conflicts = preview.Conflicts.Count }); } catch { }
-            MessageBox.Show(this, "Đã cập nhật danh mục SKU local. SKU cũ không có trong file mới KHÔNG bị xoá.", "Hoàn tất");
+                if (session.Profile.IsAdmin && GoogleService.IsConnected())
+                {
+                    try
+                    {
+                        await CloudSyncService.PushLocalProductCatalogAsync(new Progress<string>(s => _productCount.Text = s));
+                        catalogSynced = true;
+                    }
+                    catch (Exception syncEx)
+                    {
+                        AppLog.Exception("PRODUCT_CATALOG_PUSH_FAILED", syncEx);
+                    }
+                }
+            }
+            MessageBox.Show(this,
+                catalogSynced
+                    ? "Đã cập nhật danh mục SKU local và Google Sheet dùng chung. SKU cũ không có trong file mới KHÔNG bị xoá."
+                    : "Đã cập nhật danh mục SKU local. Thay đổi đang được giữ để ADMIN đồng bộ lên Google khi online. SKU cũ không có trong file mới KHÔNG bị xoá.",
+                "Hoàn tất");
             RefreshProducts();
         }
         catch (Exception ex) { Cursor = Cursors.Default; MessageBox.Show(this, ex.Message, "Không thể cập nhật danh mục SKU", MessageBoxButtons.OK, MessageBoxIcon.Error); }

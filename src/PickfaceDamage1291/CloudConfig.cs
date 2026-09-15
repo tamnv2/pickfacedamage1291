@@ -10,6 +10,7 @@ internal static class CloudConfig
 
     public const string DriveRootFolderId = "16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC";
     public const string DriveImageFolderId = "1K_lUl_uE4dskR28cVK4iZJrzFUINfvXf";
+    public const string DriveLogsFolderId = "1Z19VgAAmCN1u7z_xSSztx9IVuq3kFSlK";
     public const string DamageSpreadsheetId = "1Ubm9EhALocUovzVr3UIspdCMtHIPm2NPUw6UjlZcqw4";
 
     // Desktop OAuth Client ID is public metadata. No client secret is used by the desktop app.

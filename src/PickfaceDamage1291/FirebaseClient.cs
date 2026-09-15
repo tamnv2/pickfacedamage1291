@@ -241,10 +241,7 @@ internal static class FirebaseClient
 
     private static async Task UploadAuditEntryAsync(FirebaseSession session, FirebaseAuditEntry entry, CancellationToken ct)
     {
-        using var response = await Http.PutAsync(DbUrl($"audit/{entry.EventId}", session.IdToken), JsonContent(entry), ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException(ToFriendlyDatabaseError(response.StatusCode, body));
+        await GoogleGatewayV140.AppendAuditAsync(entry, ct);
     }
 
     public static async Task<List<FirebaseUserProfile>> ListUsersAsync(FirebaseSession adminSession, CancellationToken ct = default)

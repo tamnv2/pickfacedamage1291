@@ -109,7 +109,7 @@ internal sealed class DamageReportEditDialog : Form
         layout.SetColumnSpan(actions, 2);
 
         _imageList.Dock = DockStyle.Fill;
-        _imageList.SelectedIndexChanged += (_, _) => ShowPreview();
+        _imageList.SelectedIndexChanged += async (_, _) => await ShowPreviewAsync();
         _preview.Dock = DockStyle.Fill;
         _preview.SizeMode = PictureBoxSizeMode.Zoom;
         _preview.BorderStyle = BorderStyle.FixedSingle;
@@ -151,8 +151,17 @@ internal sealed class DamageReportEditDialog : Form
         _shift.SetShift(_original.Shift);
         _qty.Value = Math.Max(1, Math.Min(_qty.Maximum, decimal.Truncate(_original.Quantity)));
         foreach (var image in _images)
+        {
             if (File.Exists(image.LocalPath))
+            {
                 try { _hashes.Add(ImageHashService.Sha256File(image.LocalPath)); } catch { }
+            }
+            else
+            {
+                var remoteHash = SyncCacheStore.GetImageHash(image.ReportId, image.Sequence);
+                if (!string.IsNullOrWhiteSpace(remoteHash)) _hashes.Add(remoteHash);
+            }
+        }
         RefreshImages();
     }
 
@@ -225,13 +234,28 @@ internal sealed class DamageReportEditDialog : Form
         else { _preview.Image?.Dispose(); _preview.Image = null; }
     }
 
-    private void ShowPreview()
+    private async Task ShowPreviewAsync()
     {
         _preview.Image?.Dispose();
         _preview.Image = null;
         var index = _imageList.SelectedIndex;
-        if (index < 0 || index >= _images.Count || !File.Exists(_images[index].LocalPath)) return;
-        try { using var image = Image.FromFile(_images[index].LocalPath); _preview.Image = new Bitmap(image); } catch { }
+        if (index < 0 || index >= _images.Count) return;
+        var current = _images[index];
+        if (!File.Exists(current.LocalPath) && !string.IsNullOrWhiteSpace(current.DriveFileId) && GoogleService.IsConnected())
+        {
+            try
+            {
+                current = await RemoteImageCache.EnsureLocalAsync(current);
+                _images[index] = current;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Exception("REMOTE_IMAGE_DOWNLOAD_FAILED", ex, new Dictionary<string, object?> { ["report_id"] = current.ReportId, ["sequence"] = current.Sequence });
+                return;
+            }
+        }
+        if (!File.Exists(current.LocalPath)) return;
+        try { using var image = Image.FromFile(current.LocalPath); _preview.Image = new Bitmap(image); } catch { }
     }
 
     private void SaveChanges()

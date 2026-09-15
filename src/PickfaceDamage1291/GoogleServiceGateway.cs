@@ -125,6 +125,18 @@ internal static class GoogleService
 
                 progress?.Report(45);
                 var root = await CallGatewayAsync("sync_report", payload);
+                if (root.TryGetProperty("duplicate", out var duplicateNode) && duplicateNode.ValueKind == JsonValueKind.True)
+                {
+                    var existingId = root.TryGetProperty("duplicate_report_id", out var duplicateIdNode) ? duplicateIdNode.GetString() ?? string.Empty : string.Empty;
+                    throw new DuplicateReportException(existingId);
+                }
+                if (root.TryGetProperty("conflict", out var conflictNode) && conflictNode.ValueKind == JsonValueKind.True)
+                {
+                    var remoteVersion = root.TryGetProperty("remote_version", out var remoteVersionNode) && remoteVersionNode.TryGetInt32(out var parsedVersion) ? parsedVersion : 0;
+                    var message = $"Phiếu đã thay đổi trên máy khác. Local v{report.Version}, Google v{remoteVersion}. Hệ thống không ghi đè tự động.";
+                    SyncCacheStore.MarkConflict(report.ReportId, message);
+                    throw new SyncConflictException(message);
+                }
                 progress?.Report(88);
                 ValidateGatewayResult(report, localImages, root);
 
@@ -141,8 +153,19 @@ internal static class GoogleService
                 }
 
                 progress?.Report(96);
-                Database.SetReportStatus(report.ReportId, "SYNCED");
+                var changeSeq = root.TryGetProperty("change_seq", out var changeSeqNode) && changeSeqNode.TryGetInt64(out var seqValue) ? seqValue : 0;
+                var fingerprint = root.TryGetProperty("fingerprint", out var fingerprintNode) ? fingerprintNode.GetString() ?? string.Empty : string.Empty;
+                if (changeSeq > 0) SyncCacheStore.MarkSyncedMetadata(report.ReportId, changeSeq, fingerprint);
+                else Database.SetReportStatus(report.ReportId, "SYNCED");
                 progress?.Report(100);
+            }
+            catch (DuplicateReportException)
+            {
+                throw;
+            }
+            catch (SyncConflictException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -187,6 +210,11 @@ internal static class GoogleService
             };
 
             var root = await CallGatewayAsync("sync_report", payload);
+            if (root.TryGetProperty("conflict", out var conflictNode) && conflictNode.ValueKind == JsonValueKind.True)
+            {
+                var remoteVersion = root.TryGetProperty("remote_version", out var versionNode) && versionNode.TryGetInt32(out var parsedVersion) ? parsedVersion : 0;
+                throw new SyncConflictException($"Không thể xoá vì phiếu trên Google đã lên phiên bản {remoteVersion}. Hãy đồng bộ lại trước.");
+            }
             var returnedId = root.TryGetProperty("report_id", out var idNode) ? idNode.GetString() ?? string.Empty : string.Empty;
             var row = root.TryGetProperty("row", out var rowNode) && rowNode.TryGetInt32(out var rowValue) ? rowValue : 0;
             if (!string.Equals(returnedId, report.ReportId, StringComparison.Ordinal) || row < 2)
