@@ -26,6 +26,9 @@ internal static class Program
                 return;
         }
 
+        if (AppSession.Current?.OfflineMode != true)
+            RuntimeConfigService.InitializeAsync().GetAwaiter().GetResult();
+
         var main = new MainForm();
         SessionUiBinder.Bind(main);
         UiRuntimeFixes.Attach(main);
