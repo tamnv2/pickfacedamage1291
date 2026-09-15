@@ -7,6 +7,8 @@ const CFG = Object.freeze({
   SPREADSHEET_ID: '1Ubm9EhALocUovzVr3UIspdCMtHIPm2NPUw6UjlZcqw4'
 });
 
+const LOGIN_ALIAS_PREFIX = 'LOGIN_ALIAS_';
+
 const HEADERS = [
   'ID', 'Ngày phát hiện', 'Giờ phát hiện', 'Ca', 'SKU', 'Tên sản phẩm', 'Vị trí phát hiện',
   'Số lượng hư hỏng', 'Base Units', 'Ảnh 1', 'Ảnh 2', 'Ảnh 3', 'Ảnh 4', 'Ảnh 5',
@@ -17,9 +19,27 @@ function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) throw new Error('Thiếu request body.');
     const request = JSON.parse(e.postData.contents);
-    const auth = authenticateFirebase_(String(request.id_token || ''));
     const action = String(request.action || '');
     const payload = request.payload || {};
+
+    // Pre-login actions intentionally do not require an existing Firebase token.
+    // The password is forwarded only to Firebase Authentication and is never stored/logged.
+    if (action === 'login_by_username') {
+      return json_(loginByUsername_(String(request.username || ''), String(request.password || '')));
+    }
+
+    if (action === 'password_reset_by_username') {
+      return json_(passwordResetByUsername_(String(request.username || '')));
+    }
+
+    const idToken = String(request.id_token || '');
+    const auth = authenticateFirebase_(idToken);
+
+    if (action === 'sync_login_aliases') {
+      requireAdmin_(auth.profile);
+      const count = syncLoginAliases_(idToken);
+      return json_({ ok: true, count: count });
+    }
 
     if (action === 'verify') {
       verifyFixedResources_();
@@ -43,6 +63,94 @@ function doPost(e) {
   } catch (err) {
     return json_({ ok: false, error: cleanError_(err) });
   }
+}
+
+function loginByUsername_(username, password) {
+  const normalized = normalizeUsername_(username);
+  if (!normalized || !password) throw new Error('Tài khoản hoặc mật khẩu không đúng.');
+
+  const email = PropertiesService.getScriptProperties().getProperty(aliasKey_(normalized));
+  if (!email) throw new Error('Tài khoản hoặc mật khẩu không đúng.');
+
+  const response = UrlFetchApp.fetch(
+    'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + encodeURIComponent(CFG.FIREBASE_API_KEY),
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ email: email, password: password, returnSecureToken: true }),
+      muteHttpExceptions: true
+    }
+  );
+  if (response.getResponseCode() !== 200) throw new Error('Tài khoản hoặc mật khẩu không đúng.');
+
+  const result = JSON.parse(response.getContentText() || '{}');
+  const idToken = String(result.idToken || '');
+  const auth = authenticateFirebase_(idToken);
+  if (normalizeUsername_(auth.profile.username || '') !== normalized)
+    throw new Error('Tài khoản hoặc mật khẩu không đúng.');
+
+  return {
+    ok: true,
+    local_id: String(result.localId || auth.uid || ''),
+    id_token: idToken,
+    refresh_token: String(result.refreshToken || ''),
+    expires_in: String(result.expiresIn || '3600')
+  };
+}
+
+function passwordResetByUsername_(username) {
+  const normalized = normalizeUsername_(username);
+  if (!normalized) return { ok: true };
+  const email = PropertiesService.getScriptProperties().getProperty(aliasKey_(normalized));
+  if (!email) return { ok: true };
+
+  const response = UrlFetchApp.fetch(
+    'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=' + encodeURIComponent(CFG.FIREBASE_API_KEY),
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ requestType: 'PASSWORD_RESET', email: email }),
+      muteHttpExceptions: true
+    }
+  );
+  if (response.getResponseCode() !== 200)
+    throw new Error('Không gửi được yêu cầu đặt lại mật khẩu. Hãy thử lại sau.');
+  return { ok: true };
+}
+
+function syncLoginAliases_(idToken) {
+  const response = UrlFetchApp.fetch(
+    CFG.FIREBASE_DB_URL + '/users.json?auth=' + encodeURIComponent(idToken),
+    { method: 'get', muteHttpExceptions: true }
+  );
+  if (response.getResponseCode() !== 200) throw new Error('Không đọc được danh sách tài khoản để đồng bộ đăng nhập.');
+  const users = JSON.parse(response.getContentText() || '{}') || {};
+  const updates = {};
+  let count = 0;
+  Object.keys(users).forEach(uid => {
+    const profile = users[uid] || {};
+    const username = normalizeUsername_(profile.username || '');
+    const email = String(profile.email || '').trim();
+    if (!username || !email) return;
+    updates[aliasKey_(username)] = email;
+    count++;
+  });
+  if (count > 0) PropertiesService.getScriptProperties().setProperties(updates, false);
+  return count;
+}
+
+function normalizeUsername_(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function aliasKey_(normalizedUsername) {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    normalizedUsername,
+    Utilities.Charset.UTF_8
+  );
+  const hex = bytes.map(b => ((b + 256) % 256).toString(16).padStart(2, '0')).join('');
+  return LOGIN_ALIAS_PREFIX + hex;
 }
 
 function authenticateFirebase_(idToken) {
@@ -70,6 +178,11 @@ function authenticateFirebase_(idToken) {
   if (!profile || profile.active !== true) throw new Error('Tài khoản chưa được cấp quyền hoặc đã bị khóa.');
   if (String(profile.uid || user.localId) !== String(user.localId)) throw new Error('UID hồ sơ không khớp Firebase Authentication.');
   return { uid: user.localId, profile: profile };
+}
+
+function requireAdmin_(profile) {
+  if (String(profile.role || '').toLowerCase() !== 'admin')
+    throw new Error('Chỉ ADMIN được đồng bộ danh sách tài khoản đăng nhập.');
 }
 
 function requireSyncPermission_(profile) {
