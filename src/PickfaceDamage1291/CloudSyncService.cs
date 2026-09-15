@@ -190,7 +190,9 @@ internal static class CloudSyncService
         }
 
         var changed = 0;
-        const int batchSize = 500;
+        // Gateway accepts at most 1,000 products/request. Using the full supported page
+        // reduces full-sheet read/write passes on Apps Script without changing data semantics.
+        const int batchSize = 1000;
         for (var offset = 0; offset < products.Count; offset += batchSize)
         {
             ct.ThrowIfCancellationRequested();
@@ -218,7 +220,7 @@ internal static class CloudSyncService
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            var page = await GoogleGatewayV140.PullReportChangesAsync(cursor, 500, ct);
+            var page = await GoogleGatewayV140.PullReportChangesAsync(cursor, 1000, ct);
             if (page.Changes.Count == 0) break;
 
             foreach (var change in page.Changes)
@@ -244,7 +246,7 @@ internal static class CloudSyncService
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            var page = await GoogleGatewayV140.PullProductChangesAsync(cursor, 500, ct);
+            var page = await GoogleGatewayV140.PullProductChangesAsync(cursor, 1000, ct);
             serverCount = page.ServerCount;
             if (page.Changes.Count == 0) break;
             foreach (var product in page.Changes)
