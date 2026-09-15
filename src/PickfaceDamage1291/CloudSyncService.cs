@@ -21,6 +21,7 @@ internal static class CloudSyncService
 {
     private const string ReportSeqKey = "report_change_seq";
     private const string ProductSeqKey = "product_change_seq";
+    private const string DetectionTimeRepairKey = "report_detection_time_text_v145";
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
     public static async Task<CloudSyncSummary> SyncNowAsync(IProgress<string>? progress = null, CancellationToken ct = default)
@@ -215,10 +216,20 @@ internal static class CloudSyncService
 
     private static async Task<(int Applied, int Deleted, int Conflicts)> PullReportsAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        var cursor = SyncCacheStore.GetLong(ReportSeqKey);
+        var repairDetectionTime = !string.Equals(
+            SyncCacheStore.GetString(DetectionTimeRepairKey),
+            "1",
+            StringComparison.Ordinal);
+        var cursor = repairDetectionTime ? 0 : SyncCacheStore.GetLong(ReportSeqKey);
         var applied = 0;
         var deleted = 0;
         var conflicts = 0;
+
+        if (repairDetectionTime)
+        {
+            progress?.Report("Đang rà soát lại Ngày/Giờ phát hiện từ Google để sửa dữ liệu cache cũ...");
+            AppLog.Info("REPORT_DETECTION_TIME_REPAIR_START", "Bắt đầu đọc lại toàn bộ phiếu để sửa cache Ngày/Giờ phát hiện.");
+        }
 
         while (true)
         {
@@ -238,6 +249,19 @@ internal static class CloudSyncService
             progress?.Report($"Đã nhận tới thay đổi phiếu #{cursor:N0}.");
             if (!page.HasMore) break;
         }
+
+        if (repairDetectionTime)
+        {
+            SyncCacheStore.SetString(DetectionTimeRepairKey, "1");
+            AppLog.Info("REPORT_DETECTION_TIME_REPAIR_DONE", "Đã đọc lại phiếu từ Google và hoàn tất sửa cache Ngày/Giờ phát hiện.", new Dictionary<string, object?>
+            {
+                ["latest_seq"] = cursor,
+                ["applied"] = applied,
+                ["deleted"] = deleted,
+                ["conflicts"] = conflicts
+            });
+        }
+
         return (applied, deleted, conflicts);
     }
 
