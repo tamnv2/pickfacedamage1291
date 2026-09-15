@@ -4,6 +4,7 @@ const CFG = Object.freeze({
   FIREBASE_DB_URL: 'https://pickface-damage-1291-default-rtdb.asia-southeast1.firebasedatabase.app',
   ROOT_FOLDER_ID: '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC',
   IMAGE_FOLDER_ID: '1K_lUl_uE4dskR28cVK4iZJrzFUINfvXf',
+  LOG_FOLDER_ID: '1Z19VgAAmCN1u7z_xSSztx9IVuq3kFSlK',
   SPREADSHEET_ID: '1Ubm9EhALocUovzVr3UIspdCMtHIPm2NPUw6UjlZcqw4'
 });
 
@@ -45,7 +46,7 @@ function doPost(e) {
 
     if (action === 'verify') {
       verifyFixedResources_();
-      if (payload.write_headers === true) ensureHeaders_();
+      if (payload.write_headers === true) { ensureHeaders_(); ensureV140Sheets_(); }
       return json_({ ok: true, uid: auth.uid, username: auth.profile.username || '' });
     }
 
@@ -54,12 +55,44 @@ function doPost(e) {
       return json_({ ok: true, ...getImage_(String(payload.file_id || '')) });
     }
 
+    if (action === 'pull_changes') {
+      requireReportReadPermissionV140_(auth.profile);
+      return json_({ ok: true, ...pullReportChangesV140_(payload) });
+    }
+
+    if (action === 'push_products') {
+      requireAdmin_(auth.profile);
+      return json_({ ok: true, ...pushProductsV140_(auth, payload) });
+    }
+
+    if (action === 'pull_products') {
+      return json_({ ok: true, ...pullProductsV140_(payload) });
+    }
+
+    if (action === 'append_audit') {
+      return json_({ ok: true, ...appendAuditV140_(auth, payload) });
+    }
+
+    if (action === 'list_audit') {
+      requireAdmin_(auth.profile);
+      return json_({ ok: true, ...listAuditV140_(payload) });
+    }
+
+    if (action === 'delete_audit_range') {
+      requireAdmin_(auth.profile);
+      return json_({ ok: true, ...deleteAuditRangeV140_(auth, payload) });
+    }
+
+    if (action === 'upload_log') {
+      return json_({ ok: true, ...uploadLogV140_(auth, payload) });
+    }
+
     if (action === 'sync_report') {
       requireSyncPermission_(auth.profile);
       const lock = LockService.getScriptLock();
       if (!lock.tryLock(10000)) throw new Error('Hệ thống đang đồng bộ một phiếu khác. Hãy thử lại sau vài giây.');
       try {
-        const result = syncReport_(payload.report || {}, payload.images || []);
+        const result = syncReportV140_(payload.report || {}, payload.images || []);
         return json_({ ok: true, ...result });
       } finally {
         lock.releaseLock();
@@ -506,3 +539,440 @@ function cleanError_(err) {
 function json_(value) {
   return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON);
 }
+
+
+// V140_SYNC_BLOCK — Google Sheet is the shared business source of truth; SQLite is local cache/outbox.
+const REPORT_HEADERS_V140 = HEADERS.concat([
+  'Change Seq', 'Đã xoá', 'Fingerprint',
+  'Ảnh Hash 1', 'Ảnh Hash 2', 'Ảnh Hash 3', 'Ảnh Hash 4', 'Ảnh Hash 5',
+  'Deleted At', 'Deleted By'
+]);
+const PRODUCT_HEADERS_V140 = ['SKU','Tên sản phẩm','Base Units','First Seen','Last Seen','Source File','Change Seq','Updated By'];
+const AUDIT_HEADERS_V140 = ['Event ID','Server Time','Client Time','UID','Username','Device ID','Session ID','Action','Details JSON'];
+
+function ensureV140Sheets_() {
+  ensureReportHeadersV140_();
+  getOrCreateSheetV140_('SKU_Catalog', PRODUCT_HEADERS_V140);
+  getOrCreateSheetV140_('AuditHistory', AUDIT_HEADERS_V140);
+  const logs = DriveApp.getFolderById(CFG.LOG_FOLDER_ID);
+  assertHasParent_(logs, CFG.ROOT_FOLDER_ID, 'thư mục Logs');
+}
+
+function ensureReportHeadersV140_() {
+  const sheet = getDataSheet_();
+  sheet.getRange(1, 1, 1, REPORT_HEADERS_V140.length).setValues([REPORT_HEADERS_V140]);
+  const last = sheet.getLastRow();
+  if (last < 2) return;
+  const rows = sheet.getRange(2, 1, last - 1, REPORT_HEADERS_V140.length).getValues();
+  let counter = getCounterV140_('REPORT_CHANGE_SEQ_V140', sheet, 21);
+  let changed = false;
+  rows.forEach(row => {
+    if (!String(row[0] || '').trim()) return;
+    if (!Number(row[20] || 0)) { row[20] = ++counter; changed = true; }
+    if (String(row[4] || '') === '__DELETED__' && row[21] !== true) { row[21] = true; changed = true; }
+  });
+  if (changed) {
+    sheet.getRange(2, 1, rows.length, REPORT_HEADERS_V140.length).setValues(rows);
+    PropertiesService.getScriptProperties().setProperty('REPORT_CHANGE_SEQ_V140', String(counter));
+    SpreadsheetApp.flush();
+  }
+}
+
+function getOrCreateSheetV140_(name, headers) {
+  const ss = SpreadsheetApp.openById(CFG.SPREADSHEET_ID);
+  let sheet = ss.getSheetByName(name);
+  if (!sheet) sheet = ss.insertSheet(name);
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  return sheet;
+}
+
+function requireReportReadPermissionV140_(profile) {
+  if (String(profile.role || '').toLowerCase() === 'admin') return;
+  const p = profile.permissions || {};
+  if (p.view_reports === true || p.damage_entry === true || p.sync_google === true) return;
+  throw new Error('Tài khoản không có quyền đồng bộ danh sách hư hỏng.');
+}
+
+function syncReportV140_(report, images) {
+  verifyFixedResources_();
+  ensureReportHeadersV140_();
+  const reportId = String(report.report_id || '').trim();
+  const sku = String(report.sku || '').trim();
+  if (!reportId || !sku) throw new Error('Phiếu thiếu report_id hoặc SKU.');
+  const deleted = report.deleted === true || sku === '__DELETED__';
+  const sheet = getDataSheet_();
+  let row = findReportRow_(sheet, reportId);
+  const isNew = !row;
+  if (!row) row = Math.max(2, sheet.getLastRow() + 1);
+
+  const existing = isNew ? new Array(REPORT_HEADERS_V140.length).fill('') : sheet.getRange(row, 1, 1, REPORT_HEADERS_V140.length).getValues()[0];
+  const existingVersion = Number(existing[17] || 1);
+  const incomingVersion = Math.max(1, Number(report.version || 1));
+  const existingDeleted = existing[21] === true || String(existing[4] || '') === '__DELETED__';
+  const oldLinks = existing.slice(9, 14).map(v => String(v || ''));
+  const oldHashes = existing.slice(23, 28).map(v => String(v || ''));
+
+  const requested = (images || []).slice().sort((a,b) => Number(a.sequence || 0) - Number(b.sequence || 0));
+  const prepared = requested.map(image => {
+    const sequence = Number(image.sequence || 0);
+    if (sequence < 1 || sequence > 5) throw new Error('Thứ tự ảnh không hợp lệ: ' + sequence + '.');
+    let fileId = String(image.drive_file_id || '');
+    let url = String(image.drive_link || '');
+    if (!fileId && oldLinks[sequence - 1]) {
+      url = oldLinks[sequence - 1];
+      fileId = extractDriveFileId_(url);
+    }
+    let hash = String(image.sha256 || oldHashes[sequence - 1] || '').toLowerCase();
+    const data = String(image.data_base64 || '');
+    if (!hash && data) hash = sha256BytesV140_(Utilities.base64Decode(data));
+    if (!hash && fileId) {
+      try {
+        const file = DriveApp.getFileById(fileId);
+        assertHasParent_(file, CFG.IMAGE_FOLDER_ID, 'Ảnh hư hỏng');
+        hash = sha256BytesV140_(file.getBlob().getBytes());
+      } catch (_) {}
+    }
+    return { image:image, sequence:sequence, fileId:fileId, url:url, hash:hash, data:data };
+  });
+
+  const imageHashes = ['', '', '', '', ''];
+  prepared.forEach(x => imageHashes[x.sequence - 1] = x.hash);
+  const fingerprint = deleted ? '' : buildFingerprintV140_(report, imageHashes.filter(Boolean));
+
+  if (!deleted && fingerprint) {
+    const duplicate = findFingerprintRowV140_(sheet, fingerprint, reportId);
+    if (duplicate) {
+      return {
+        report_id: reportId,
+        row: duplicate.row,
+        duplicate: true,
+        duplicate_report_id: duplicate.reportId,
+        fingerprint: fingerprint,
+        change_seq: Number(duplicate.values[20] || 0),
+        images: []
+      };
+    }
+  }
+
+  if (!isNew) {
+    if (existingVersion > incomingVersion) {
+      return { report_id:reportId, row:row, conflict:true, remote_version:existingVersion, change_seq:Number(existing[20] || 0), fingerprint:String(existing[22] || ''), images:[] };
+    }
+    if (existingVersion === incomingVersion) {
+      const existingFingerprint = String(existing[22] || '');
+      if (existingFingerprint && ((!deleted && existingFingerprint !== fingerprint) || existingDeleted !== deleted)) {
+        return { report_id:reportId, row:row, conflict:true, remote_version:existingVersion, change_seq:Number(existing[20] || 0), fingerprint:existingFingerprint, images:[] };
+      }
+      if (existingFingerprint || existingDeleted === deleted) {
+        return {
+          report_id:reportId,
+          row:row,
+          change_seq:Number(existing[20] || 0),
+          fingerprint:existingFingerprint || fingerprint,
+          images:existingImagesResultV140_(existing)
+        };
+      }
+    }
+  }
+
+  const links = ['', '', '', '', ''];
+  const imageResults = [];
+  const folder = DriveApp.getFolderById(CFG.IMAGE_FOLDER_ID);
+  prepared.forEach(x => {
+    let fileId = x.fileId;
+    let url = x.url;
+    let hash = x.hash;
+    if (fileId) {
+      const file = DriveApp.getFileById(fileId);
+      assertHasParent_(file, CFG.IMAGE_FOLDER_ID, 'Ảnh hư hỏng');
+      if (!url) url = file.getUrl();
+      if (!hash) hash = sha256BytesV140_(file.getBlob().getBytes());
+    } else {
+      if (!x.data) throw new Error('Ảnh ' + x.sequence + ' chưa có dữ liệu để tải lên.');
+      const bytes = Utilities.base64Decode(x.data);
+      const mime = String(x.image.mime_type || 'application/octet-stream');
+      const name = buildImageName_(report, x.sequence, mime, String(x.image.original_name || ''));
+      const file = folder.createFile(Utilities.newBlob(bytes, mime, name));
+      fileId = file.getId();
+      url = file.getUrl();
+      if (!hash) hash = sha256BytesV140_(bytes);
+    }
+    links[x.sequence - 1] = url;
+    imageHashes[x.sequence - 1] = hash;
+    imageResults.push({ sequence:x.sequence, file_id:fileId, url:url, sha256:hash });
+  });
+
+  const finalFingerprint = deleted ? '' : buildFingerprintV140_(report, imageHashes.filter(Boolean));
+  const changeSeq = nextCounterV140_('REPORT_CHANGE_SEQ_V140', sheet, 21);
+  const now = new Date();
+  const values = [
+    reportId,
+    deleted ? '' : displayDate_(report.occurred_date),
+    deleted ? '' : pad2_(report.hour) + ':' + pad2_(report.minute),
+    deleted ? '' : String(report.shift || ''),
+    deleted ? '__DELETED__' : sku,
+    deleted ? 'ĐÃ XÓA' : String(report.product_name || ''),
+    deleted ? '' : String(report.location || ''),
+    deleted ? 0 : Number(report.quantity || 0),
+    deleted ? '' : String(report.base_unit || ''),
+    links[0],links[1],links[2],links[3],links[4],
+    String(report.created_at || existing[14] || ''),
+    Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm:ss dd/MM/yyyy'),
+    String(report.created_by || existing[16] || ''),
+    incomingVersion,
+    String(report.updated_at || ''),
+    String(report.updated_by || ''),
+    changeSeq,
+    deleted,
+    finalFingerprint,
+    imageHashes[0],imageHashes[1],imageHashes[2],imageHashes[3],imageHashes[4],
+    deleted ? now.toISOString() : '',
+    deleted ? String(report.updated_by || '') : ''
+  ];
+  sheet.getRange(row, 1, 1, REPORT_HEADERS_V140.length).setValues([values]);
+  SpreadsheetApp.flush();
+  return { report_id:reportId, row:row, change_seq:changeSeq, fingerprint:finalFingerprint, images:imageResults };
+}
+
+function pullReportChangesV140_(payload) {
+  ensureReportHeadersV140_();
+  const sheet = getDataSheet_();
+  const after = Math.max(0, Number(payload.after_seq || 0));
+  const limit = Math.max(1, Math.min(1000, Number(payload.limit || 500)));
+  const last = sheet.getLastRow();
+  if (last < 2) return { changes:[], latest_seq:getCounterV140_('REPORT_CHANGE_SEQ_V140', sheet, 21), has_more:false };
+  const rows = sheet.getRange(2, 1, last - 1, REPORT_HEADERS_V140.length).getValues();
+  const matches = [];
+  rows.forEach((values, idx) => {
+    const seq = Number(values[20] || 0);
+    if (!String(values[0] || '').trim() || seq <= after) return;
+    matches.push({ values:values, row:idx + 2, seq:seq });
+  });
+  matches.sort((a,b) => a.seq - b.seq);
+  const page = matches.slice(0, limit).map(x => rowToChangeV140_(x.values));
+  return {
+    changes: page,
+    latest_seq: getCounterV140_('REPORT_CHANGE_SEQ_V140', sheet, 21),
+    has_more: matches.length > limit
+  };
+}
+
+function rowToChangeV140_(v) {
+  const time = String(v[2] || '').split(':');
+  const images = [];
+  for (let i = 0; i < 5; i++) {
+    const url = String(v[9 + i] || '');
+    const hash = String(v[23 + i] || '');
+    if (!url && !hash) continue;
+    images.push({ sequence:i + 1, url:url, file_id:extractDriveFileId_(url), sha256:hash });
+  }
+  return {
+    change_seq:Number(v[20] || 0),
+    deleted:v[21] === true || String(v[4] || '') === '__DELETED__',
+    fingerprint:String(v[22] || ''),
+    deleted_at:asIsoV140_(v[28]),
+    deleted_by:String(v[29] || ''),
+    report:{
+      report_id:String(v[0] || ''),
+      occurred_date:isoDateV140_(v[1]),
+      hour:Number(time[0] || 0), minute:Number(time[1] || 0),
+      shift:String(v[3] || ''), sku:String(v[4] || ''), product_name:String(v[5] || ''),
+      location:String(v[6] || ''), quantity:Number(v[7] || 0), base_unit:String(v[8] || ''),
+      created_at:asIsoV140_(v[14]), created_by:String(v[16] || ''), version:Math.max(1,Number(v[17] || 1)),
+      updated_at:asIsoV140_(v[18]), updated_by:String(v[19] || '')
+    },
+    images:images
+  };
+}
+
+function pushProductsV140_(auth, payload) {
+  const sheet = getOrCreateSheetV140_('SKU_Catalog', PRODUCT_HEADERS_V140);
+  const products = Array.isArray(payload.products) ? payload.products.slice(0, 1000) : [];
+  const last = sheet.getLastRow();
+  const rows = last >= 2 ? sheet.getRange(2,1,last-1,PRODUCT_HEADERS_V140.length).getValues() : [];
+  const index = {};
+  rows.forEach((row,i) => { const sku=String(row[0]||'').trim(); if (sku) index[sku]=i; });
+  let counter = getCounterV140_('PRODUCT_CHANGE_SEQ_V140', sheet, 7);
+  let changed = 0;
+  products.forEach(p => {
+    const sku=String(p.sku||'').trim(); if (!sku) return;
+    const candidate=[sku,String(p.product_name||''),String(p.base_unit||''),String(p.first_seen_at||''),String(p.last_seen_at||''),String(p.source_file||'')];
+    const i=index[sku];
+    if (i === undefined) {
+      const row=candidate.concat([++counter,String(auth.profile.username||'')]);
+      index[sku]=rows.length; rows.push(row); changed++; return;
+    }
+    const current=rows[i];
+    let differs=false;
+    for(let c=0;c<6;c++) if(String(current[c]||'')!==String(candidate[c]||'')){ differs=true; break; }
+    if (!differs) return;
+    rows[i]=candidate.concat([++counter,String(auth.profile.username||'')]); changed++;
+  });
+  if (rows.length) sheet.getRange(2,1,rows.length,PRODUCT_HEADERS_V140.length).setValues(rows);
+  PropertiesService.getScriptProperties().setProperty('PRODUCT_CHANGE_SEQ_V140',String(counter));
+  SpreadsheetApp.flush();
+  return { changed:changed, latest_seq:counter, server_count:rows.length };
+}
+
+function pullProductsV140_(payload) {
+  const sheet=getOrCreateSheetV140_('SKU_Catalog',PRODUCT_HEADERS_V140);
+  const after=Math.max(0,Number(payload.after_seq||0));
+  const limit=Math.max(1,Math.min(1000,Number(payload.limit||500)));
+  const last=sheet.getLastRow();
+  if(last<2) return {changes:[],latest_seq:getCounterV140_('PRODUCT_CHANGE_SEQ_V140',sheet,7),has_more:false,server_count:0};
+  const rows=sheet.getRange(2,1,last-1,PRODUCT_HEADERS_V140.length).getValues();
+  const matches=rows.filter(r=>String(r[0]||'').trim() && Number(r[6]||0)>after).sort((a,b)=>Number(a[6]||0)-Number(b[6]||0));
+  const changes=matches.slice(0,limit).map(r=>({
+    sku:String(r[0]||''), product_name:String(r[1]||''), base_unit:String(r[2]||''),
+    first_seen_at:asIsoV140_(r[3]), last_seen_at:asIsoV140_(r[4]), source_file:String(r[5]||''), change_seq:Number(r[6]||0)
+  }));
+  return {changes:changes,latest_seq:getCounterV140_('PRODUCT_CHANGE_SEQ_V140',sheet,7),has_more:matches.length>limit,server_count:rows.filter(r=>String(r[0]||'').trim()).length};
+}
+
+function appendAuditV140_(auth, payload) {
+  const sheet=getOrCreateSheetV140_('AuditHistory',AUDIT_HEADERS_V140);
+  const eventId=String(payload.event_id||'').trim() || Utilities.getUuid().replace(/-/g,'');
+  if(sheet.getLastRow()>=2){
+    const found=sheet.getRange(2,1,sheet.getLastRow()-1,1).createTextFinder(eventId).matchEntireCell(true).findNext();
+    if(found) return {stored:false,duplicate:true,event_id:eventId,server_time:Number(sheet.getRange(found.getRow(),2).getValue()||0)};
+  }
+  const serverTime=Date.now();
+  let details='';
+  try{ details=JSON.stringify(payload.details===undefined?null:payload.details); }catch(_){ details='null'; }
+  if(details.length>20000) details=details.substring(0,20000)+'...';
+  sheet.appendRow([
+    eventId,serverTime,String(payload.client_time||''),String(auth.uid||''),String(auth.profile.username||''),
+    safeTextV140_(payload.device_id,200),safeTextV140_(payload.session_id,200),safeTextV140_(payload.action,200),details
+  ]);
+  return {stored:true,duplicate:false,event_id:eventId,server_time:serverTime};
+}
+
+function listAuditV140_(payload) {
+  const sheet=getOrCreateSheetV140_('AuditHistory',AUDIT_HEADERS_V140);
+  const beforeRaw=payload.before_server_time_exclusive;
+  const before=beforeRaw===null||beforeRaw===undefined||beforeRaw===''?Number.MAX_SAFE_INTEGER:Number(beforeRaw);
+  const limit=Math.max(1,Math.min(100,Number(payload.limit||100)));
+  const last=sheet.getLastRow();
+  if(last<2) return {entries:[],has_more:false,next_before_server_time:null};
+  const rows=sheet.getRange(2,1,last-1,AUDIT_HEADERS_V140.length).getValues();
+  const matches=rows.filter(r=>Number(r[1]||0)<before).sort((a,b)=>Number(b[1]||0)-Number(a[1]||0));
+  const page=matches.slice(0,limit).map(r=>{
+    let details=null; try{details=JSON.parse(String(r[8]||'null'));}catch(_){details=String(r[8]||'');}
+    return {event_id:String(r[0]||''),server_time:Number(r[1]||0),client_time:String(r[2]||''),uid:String(r[3]||''),username:String(r[4]||''),device_id:String(r[5]||''),session_id:String(r[6]||''),action:String(r[7]||''),details:details};
+  });
+  return {entries:page,has_more:matches.length>limit,next_before_server_time:(matches.length>limit&&page.length)?Number(page[page.length-1].server_time||0):null};
+}
+
+function deleteAuditRangeV140_(auth,payload) {
+  const from=Number(payload.from_server_time||0), to=Number(payload.to_server_time||0);
+  if(!from||!to||from>to) throw new Error('Khoảng ngày xóa không hợp lệ.');
+  const sheet=getOrCreateSheetV140_('AuditHistory',AUDIT_HEADERS_V140);
+  const last=sheet.getLastRow();
+  if(last<2) return {deleted_count:0};
+  const rows=sheet.getRange(2,1,last-1,AUDIT_HEADERS_V140.length).getValues();
+  const kept=[]; let deleted=0;
+  rows.forEach(r=>{
+    const t=Number(r[1]||0), action=String(r[7]||'');
+    if(t>=from&&t<=to&&action!=='AUDIT_LOGS_DELETED') deleted++; else kept.push(r);
+  });
+  sheet.getRange(2,1,last-1,AUDIT_HEADERS_V140.length).clearContent();
+  if(kept.length) sheet.getRange(2,1,kept.length,AUDIT_HEADERS_V140.length).setValues(kept);
+  appendAuditV140_(auth,{event_id:Utilities.getUuid().replace(/-/g,''),device_id:'server',session_id:'',action:'AUDIT_LOGS_DELETED',client_time:new Date().toISOString(),details:{from_server_time:from,to_server_time:to,deleted_count:deleted}});
+  SpreadsheetApp.flush();
+  return {deleted_count:deleted};
+}
+
+function uploadLogV140_(auth,payload) {
+  const folder=DriveApp.getFolderById(CFG.LOG_FOLDER_ID);
+  assertHasParent_(folder,CFG.ROOT_FOLDER_ID,'thư mục Logs');
+  const data=String(payload.data_base64||'');
+  if(!data) throw new Error('File log không có dữ liệu.');
+  let bytes=Utilities.base64Decode(data);
+  if(bytes.length>8*1024*1024) throw new Error('File log vượt giới hạn 8 MB.');
+  let text=Utilities.newBlob(bytes).getDataAsString('UTF-8');
+  text=sanitizeLogV140_(text);
+  bytes=Utilities.newBlob(text,'text/plain').getBytes();
+  const stamp=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss');
+  const user=sanitizeFilePart_(String(auth.profile.username||'user')) || 'user';
+  const device=sanitizeFilePart_(String(payload.device_id||'device')).substring(0,24) || 'device';
+  let original=sanitizeFilePart_(String(payload.file_name||'app.log')) || 'app.log';
+  if(!original.toLowerCase().endsWith('.log')) original += '.log';
+  const name=(stamp+'_'+user+'_'+device+'_'+original).substring(0,220);
+  const file=folder.createFile(Utilities.newBlob(bytes,'text/plain',name));
+  return {file_id:file.getId(),url:file.getUrl(),name:file.getName(),size:bytes.length};
+}
+
+function sanitizeLogV140_(text) {
+  let v=String(text||'');
+  v=v.replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/ig,'$1<redacted>');
+  v=v.replace(/([?&](?:auth|key|token|id_token|refresh_token|access_token)=)[^&\s]+/ig,'$1<redacted>');
+  v=v.replace(/("?(?:password|passwd|pwd|secret|credential|id_token|refresh_token|access_token|authorization|cookie)"?\s*[:=]\s*"?)[^",;\s}]+/ig,'$1<redacted>');
+  v=v.replace(/eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g,'<redacted-jwt>');
+  return v;
+}
+
+function findFingerprintRowV140_(sheet,fingerprint,excludeId) {
+  const last=sheet.getLastRow(); if(last<2) return null;
+  const rows=sheet.getRange(2,1,last-1,REPORT_HEADERS_V140.length).getValues();
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
+    if(String(r[0]||'')===String(excludeId||'')) continue;
+    if(r[21]===true||String(r[4]||'')==='__DELETED__') continue;
+    if(String(r[22]||'')===fingerprint) return {row:i+2,reportId:String(r[0]||''),values:r};
+  }
+  return null;
+}
+
+function buildFingerprintV140_(report, hashes) {
+  const core=[
+    String(report.occurred_date||''),pad2_(report.hour)+':'+pad2_(report.minute),String(report.shift||''),String(report.sku||''),
+    String(report.product_name||''),String(report.location||''),String(Number(report.quantity||0)),String(report.base_unit||''),
+    (hashes||[]).map(x=>String(x||'').toLowerCase()).sort()
+  ];
+  return sha256TextV140_(JSON.stringify(core));
+}
+
+function existingImagesResultV140_(row) {
+  const out=[];
+  for(let i=0;i<5;i++){
+    const url=String(row[9+i]||''), hash=String(row[23+i]||'');
+    if(!url&&!hash) continue;
+    out.push({sequence:i+1,file_id:extractDriveFileId_(url),url:url,sha256:hash});
+  }
+  return out;
+}
+
+function sha256TextV140_(text) {
+  const bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,String(text||''),Utilities.Charset.UTF_8);
+  return bytes.map(b=>((b+256)%256).toString(16).padStart(2,'0')).join('');
+}
+function sha256BytesV140_(bytes) {
+  const digest=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,bytes);
+  return digest.map(b=>((b+256)%256).toString(16).padStart(2,'0')).join('');
+}
+function getCounterV140_(key,sheet,col) {
+  const props=PropertiesService.getScriptProperties();
+  let current=Number(props.getProperty(key)||0);
+  if(!current && sheet.getLastRow()>=2){
+    const vals=sheet.getRange(2,col,sheet.getLastRow()-1,1).getValues();
+    vals.forEach(r=>{current=Math.max(current,Number(r[0]||0));});
+    props.setProperty(key,String(current));
+  }
+  return current;
+}
+function nextCounterV140_(key,sheet,col) {
+  const next=getCounterV140_(key,sheet,col)+1;
+  PropertiesService.getScriptProperties().setProperty(key,String(next));
+  return next;
+}
+function isoDateV140_(value) {
+  if(value instanceof Date) return Utilities.formatDate(value,Session.getScriptTimeZone(),'yyyy-MM-dd');
+  const s=String(value||'');
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m=s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m?m[3]+'-'+m[2]+'-'+m[1]:s;
+}
+function asIsoV140_(value) {
+  if(value instanceof Date) return value.toISOString();
+  return String(value||'');
+}
+function safeTextV140_(value,max) { const s=String(value||''); return s.length>(max||1000)?s.substring(0,max||1000):s; }

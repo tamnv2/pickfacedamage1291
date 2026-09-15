@@ -202,6 +202,15 @@ internal static class GoogleGatewayV140
         return Int(root, "deleted_count");
     }
 
+    public static async Task<(byte[] Bytes, string MimeType, string Name)> GetImageAsync(string fileId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(fileId)) throw new ArgumentException("Thiếu mã ảnh Drive.", nameof(fileId));
+        var root = await CallAsync("get_image", new { file_id = fileId }, ct);
+        var data = Str(root, "data_base64");
+        if (string.IsNullOrWhiteSpace(data)) throw new InvalidOperationException("Google không trả dữ liệu ảnh.");
+        return (Convert.FromBase64String(data), Str(root, "mime_type"), Str(root, "name"));
+    }
+
     public static async Task UploadLogAsync(string fileName, byte[] bytes, CancellationToken ct = default)
     {
         if (bytes.Length == 0) throw new InvalidOperationException("File log rỗng.");

@@ -388,7 +388,7 @@ WHERE report_id=$id
     {
         using var cn = Open();
         using var cmd = cn.CreateCommand();
-        cmd.CommandText = $"SELECT {ReportColumns} FROM damage_reports WHERE sync_status<>'SYNCED' ORDER BY created_at";
+        cmd.CommandText = $"SELECT {ReportColumns} FROM damage_reports WHERE sync_status IN ('PENDING','ERROR','OFFLINE_PENDING','SYNCING') ORDER BY created_at";
         using var r = cmd.ExecuteReader();
         var result = new List<DamageReport>();
         while (r.Read()) result.Add(ReadReport(r));

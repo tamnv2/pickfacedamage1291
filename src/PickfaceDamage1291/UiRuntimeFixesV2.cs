@@ -270,9 +270,19 @@ internal static class UiRuntimeFixes
             await GoogleService.VerifyBindingAsync(writeHeaders: true);
             SetGoogleHeader(form, "Google: đã kết nối tự động");
 
-            if (session.Profile.IsAdmin || session.Profile.HasPermission("sync_google") || session.Profile.HasPermission("damage_entry"))
+            if (session.Profile.IsAdmin || session.Profile.HasPermission("sync_google") || session.Profile.HasPermission("damage_entry") || session.Profile.HasPermission("view_reports"))
             {
-                try { await GoogleService.SyncAllPendingAsync(); } catch { }
+                try
+                {
+                    var progress = new Progress<string>(text => SetGoogleHeader(form, "Google: " + text));
+                    await CloudSyncService.SyncNowAsync(progress);
+                    SetGoogleHeader(form, "Google: đã đồng bộ đa máy");
+                }
+                catch (Exception syncEx)
+                {
+                    AppLog.Exception("STARTUP_SYNC_FAILED", syncEx);
+                    SetGoogleHeader(form, "Google: đã kết nối • đồng bộ chưa hoàn tất");
+                }
             }
         }
         catch (Exception ex)

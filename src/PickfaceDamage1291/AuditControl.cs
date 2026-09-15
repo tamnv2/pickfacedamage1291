@@ -61,7 +61,7 @@ internal sealed class AuditControl : UserControl
         _deleteTo.CustomFormat = "dd/MM/yyyy";
         _deleteTo.Width = 125;
         _deleteTo.Value = DateTime.Today;
-        var delete = new Button { Text = "Xóa logs theo ngày", AutoSize = true, Height = 34, Padding = new Padding(8, 0, 8, 0) };
+        var delete = new Button { Text = "Xóa lịch sử theo ngày", AutoSize = true, Height = 34, Padding = new Padding(8, 0, 8, 0) };
         delete.Click += async (_, _) => await DeleteRangeAsync();
 
         _status.AutoSize = true;
@@ -135,14 +135,14 @@ internal sealed class AuditControl : UserControl
                     Short(e.SessionId, 14),
                     FormatDetails(e.Details));
             }
-            _status.Text = $"Trang {_pageIndex + 1} • {_currentPage.Entries.Count:N0}/{PageSize} logs";
+            _status.Text = $"Trang {_pageIndex + 1} • {_currentPage.Entries.Count:N0}/{PageSize} bản ghi";
             UpdatePagingButtons();
         }
         catch (Exception ex)
         {
             _status.Text = "Không tải được lịch sử";
             UpdatePagingButtons();
-            MessageBox.Show(this, ex.Message + "\n\nNếu vừa cập nhật Security Rules, OWNER cần Publish rules mới.", "Lịch sử", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, ex.Message + "\n\nKiểm tra kết nối Google Sheet gateway nếu lỗi tiếp diễn.", "Lịch sử", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -190,7 +190,7 @@ internal sealed class AuditControl : UserControl
 
         var confirm = MessageBox.Show(
             this,
-            $"Xóa toàn bộ logs từ {from:dd/MM/yyyy} đến {to:dd/MM/yyyy}?\n\nLog ghi nhận chính hành động xóa sẽ được giữ lại và không thể xóa bằng chức năng này.",
+            $"Xóa toàn bộ lịch sử từ {from:dd/MM/yyyy} đến {to:dd/MM/yyyy}?\n\nLog ghi nhận chính hành động xóa sẽ được giữ lại và không thể xóa bằng chức năng này.",
             "Xác nhận xóa logs",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -203,7 +203,7 @@ internal sealed class AuditControl : UserControl
             var fromMs = new DateTimeOffset(fromLocal).ToUnixTimeMilliseconds();
             var toMs = new DateTimeOffset(toExclusiveLocal).ToUnixTimeMilliseconds() - 1;
             var deleted = await AuditAdminService.DeleteRangeAsync(session, fromMs, toMs);
-            MessageBox.Show(this, $"Đã xóa {deleted:N0} logs trong phạm vi đã chọn.", "Hoàn tất", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, $"Đã xóa {deleted:N0} bản ghi lịch sử trong phạm vi đã chọn.", "Hoàn tất", MessageBoxButtons.OK, MessageBoxIcon.Information);
             await RefreshAsync(resetPaging: true);
         }
         catch (Exception ex)

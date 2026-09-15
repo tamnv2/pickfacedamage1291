@@ -109,6 +109,17 @@ internal static class BackgroundSyncCoordinator
                 Publish(new BackgroundSyncState(reportId, report.Sku, 100, $"Đã đồng bộ SKU {report.Sku}.", Math.Max(0, QueueCount - 1), true, true, false));
                 NotificationCenter.Show(null, $"Đã đồng bộ SKU {report.Sku} lên Google.", "Đồng bộ hoàn tất", MessageBoxIcon.Information);
             }
+            catch (DuplicateReportException ex)
+            {
+                SyncCacheStore.RemoveLocalDuplicate(reportId, ex.ExistingReportId);
+                Publish(new BackgroundSyncState(reportId, report.Sku, 100, $"SKU {report.Sku} trùng dữ liệu trung tâm.", Math.Max(0, QueueCount - 1), true, true, false));
+                NotificationCenter.Show(null, ex.Message, "Không tạo phiếu trùng", MessageBoxIcon.Information);
+            }
+            catch (SyncConflictException ex)
+            {
+                Publish(new BackgroundSyncState(reportId, report.Sku, 100, $"SKU {report.Sku} có xung đột phiên bản.", Math.Max(0, QueueCount - 1), true, true, true));
+                NotificationCenter.Show(null, ex.Message, "Xung đột đồng bộ", MessageBoxIcon.Warning);
+            }
             catch (Exception ex)
             {
                 Publish(new BackgroundSyncState(reportId, report.Sku, 100, $"Đồng bộ SKU {report.Sku} chưa thành công.", Math.Max(0, QueueCount - 1), true, true, true));
