@@ -20,6 +20,21 @@ jobs:
           ref: feat/v1.4.0-multidevice-sync-logs
           fetch-depth: 0
 
+      - name: Repair patch helper quoting
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply_v140.py')
+          text = p.read_text(encoding='utf-8')
+          old = "    'cmd.CommandText = $\"SELECT {ReportColumns} FROM damage_reports WHERE sync_status<>'SYNCED' ORDER BY created_at\";',"
+          new = "    '''cmd.CommandText = $\"SELECT {ReportColumns} FROM damage_reports WHERE sync_status<>'SYNCED' ORDER BY created_at\";''',"
+          if old not in text:
+              raise SystemExit('Expected Database patch marker not found')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          python3 -m py_compile scripts/apply_v140.py
+
       - name: Apply v1.4.0 source patch
         run: python3 scripts/apply_v140.py
 
