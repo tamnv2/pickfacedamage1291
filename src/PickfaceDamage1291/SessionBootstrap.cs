@@ -34,16 +34,17 @@ internal static class SessionBootstrap
         AppSession.OperatorManager = manager;
         SecureSessionStore.Save(session);
 
-        // Audit is durable because AppendAuditAsync writes the local outbox before its first
-        // network await. Do not block login while old audit rows are being sent to Apps Script.
-        // The normal cloud-sync path flushes the outbox after the main window is already usable.
+        // Login audit is committed to the durable local outbox only. It is sent by the normal
+        // cloud-sync path after the main window is usable, avoiding both login delay and a race
+        // where two concurrent transports could append the same event at once.
         try
         {
-            _ = FirebaseClient.AppendAuditAsync(session, "LOGIN_SUCCESS", new { role = profile.Role }, manager?.SessionId, CancellationToken.None);
+            DurableAuditQueue.Enqueue(session, "LOGIN_SUCCESS", new { role = profile.Role }, manager?.SessionId);
         }
-        catch
+        catch (Exception ex)
         {
-            // Audit must never block a valid login. The local outbox remains the durable source.
+            AppLog.Exception("LOGIN_AUDIT_QUEUE_FAILED", ex);
+            // Audit transport/storage must never invalidate an otherwise valid login.
         }
         return true;
     }
@@ -62,7 +63,7 @@ internal static class SessionBootstrap
         {
             AppSession.Current = cached;
             AppSession.OperatorManager = null;
-            try { FirebaseClient.AppendAuditAsync(cached, "LOGIN_OFFLINE", new { role = cached.Profile.Role }).GetAwaiter().GetResult(); } catch { }
+            try { DurableAuditQueue.Enqueue(cached, "LOGIN_OFFLINE", new { role = cached.Profile.Role }); } catch { }
             return true;
         }
 
@@ -78,7 +79,7 @@ internal static class SessionBootstrap
         AppSession.OperatorManager = manager;
         manager.StartOfflineMonitoring();
         SecureSessionStore.Save(cached);
-        try { FirebaseClient.AppendAuditAsync(cached, "LOGIN_OFFLINE", new { role = cached.Profile.Role }, manager.SessionId).GetAwaiter().GetResult(); } catch { }
+        try { DurableAuditQueue.Enqueue(cached, "LOGIN_OFFLINE", new { role = cached.Profile.Role }, manager.SessionId); } catch { }
         return true;
     }
 }
