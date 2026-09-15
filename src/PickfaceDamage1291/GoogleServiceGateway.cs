@@ -38,13 +38,23 @@ internal static class GoogleService
         _ = await CallGatewayAsync("verify", payload);
     }
 
+    /// <summary>
+    /// Manual "Đồng bộ lại" is intentionally a reconciliation pass over every local report, not only
+    /// reports currently marked pending. v1.3.0 could mark a local row SYNCED even though the gateway
+    /// had overwritten a previous Google Sheet row. Re-sending all reports is safe because report_id is
+    /// the idempotency key on the gateway and restores missing rows/images without creating duplicates.
+    /// </summary>
     public static async Task SyncAllPendingAsync(IProgress<string>? progress = null)
     {
         EnsureGatewayReady();
-        var pending = Database.GetPendingReports();
-        foreach (var report in pending)
+        var reports = Database.GetReports(int.MaxValue)
+            .OrderBy(x => x.CreatedAt)
+            .ToList();
+        var index = 0;
+        foreach (var report in reports)
         {
-            progress?.Report($"Đồng bộ {report.Sku} - {report.ReportId[..Math.Min(8, report.ReportId.Length)]}...");
+            index++;
+            progress?.Report($"Đối soát {index:N0}/{reports.Count:N0}: {report.Sku} - {report.ReportId[..Math.Min(8, report.ReportId.Length)]}...");
             await SyncReportAsync(report);
         }
     }
@@ -108,6 +118,8 @@ internal static class GoogleService
             };
 
             var root = await CallGatewayAsync("sync_report", payload);
+            ValidateGatewayResult(report, localImages, root);
+
             if (root.TryGetProperty("images", out var imagesNode) && imagesNode.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in imagesNode.EnumerateArray())
@@ -115,7 +127,7 @@ internal static class GoogleService
                     var sequence = item.TryGetProperty("sequence", out var seqNode) ? seqNode.GetInt32() : 0;
                     var fileId = item.TryGetProperty("file_id", out var fileNode) ? fileNode.GetString() ?? string.Empty : string.Empty;
                     var link = item.TryGetProperty("url", out var urlNode) ? urlNode.GetString() ?? string.Empty : string.Empty;
-                    if (sequence > 0 && !string.IsNullOrWhiteSpace(fileId))
+                    if (sequence > 0 && !string.IsNullOrWhiteSpace(fileId) && !string.IsNullOrWhiteSpace(link))
                         Database.UpdateImageDrive(report.ReportId, sequence, fileId, link);
                 }
             }
@@ -126,6 +138,39 @@ internal static class GoogleService
         {
             Database.SetReportStatus(report.ReportId, "ERROR", ex.Message);
             throw;
+        }
+    }
+
+    private static void ValidateGatewayResult(DamageReport report, IReadOnlyList<DamageImage> localImages, JsonElement root)
+    {
+        var returnedId = root.TryGetProperty("report_id", out var idNode) ? idNode.GetString() ?? string.Empty : string.Empty;
+        if (!string.Equals(returnedId, report.ReportId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Google gateway xác nhận sai report_id. Phiếu chưa được đánh dấu đồng bộ.");
+
+        var row = root.TryGetProperty("row", out var rowNode) && rowNode.TryGetInt32(out var rowValue) ? rowValue : 0;
+        if (row < 2)
+            throw new InvalidOperationException("Google gateway không xác nhận được dòng dữ liệu hợp lệ trên Google Sheet.");
+
+        var returnedImages = new Dictionary<int, (string FileId, string Url)>();
+        if (root.TryGetProperty("images", out var imagesNode) && imagesNode.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in imagesNode.EnumerateArray())
+            {
+                var sequence = item.TryGetProperty("sequence", out var seqNode) && seqNode.TryGetInt32(out var seq) ? seq : 0;
+                var fileId = item.TryGetProperty("file_id", out var fileNode) ? fileNode.GetString() ?? string.Empty : string.Empty;
+                var url = item.TryGetProperty("url", out var urlNode) ? urlNode.GetString() ?? string.Empty : string.Empty;
+                if (sequence > 0) returnedImages[sequence] = (fileId, url);
+            }
+        }
+
+        if (returnedImages.Count != localImages.Count)
+            throw new InvalidOperationException($"Google gateway chỉ xác nhận {returnedImages.Count}/{localImages.Count} ảnh. Phiếu giữ trạng thái lỗi để đồng bộ lại.");
+
+        foreach (var image in localImages)
+        {
+            if (!returnedImages.TryGetValue(image.Sequence, out var saved) ||
+                string.IsNullOrWhiteSpace(saved.FileId) || string.IsNullOrWhiteSpace(saved.Url))
+                throw new InvalidOperationException($"Google gateway chưa xác nhận ảnh {image.Sequence} trên Drive. Phiếu giữ trạng thái lỗi để đồng bộ lại.");
         }
     }
 

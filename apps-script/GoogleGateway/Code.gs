@@ -222,28 +222,37 @@ function ensureHeaders_() {
 function syncReport_(report, images) {
   verifyFixedResources_();
   ensureHeaders_();
-  if (!report.report_id || !report.sku) throw new Error('Phiếu thiếu report_id hoặc SKU.');
+  const reportId = String(report.report_id || '').trim();
+  const sku = String(report.sku || '').trim();
+  if (!reportId || !sku) throw new Error('Phiếu thiếu report_id hoặc SKU.');
 
   const sheet = getDataSheet_();
-  let row = findReportRow_(sheet, String(report.report_id));
+  let row = findReportRow_(sheet, reportId);
+  const isNewRow = !row;
   if (!row) {
-    sheet.appendRow(new Array(HEADERS.length).fill(''));
-    row = sheet.getLastRow();
-    sheet.getRange(row, 1).setValue(String(report.report_id));
+    // Do not append an all-empty row and then call getLastRow(). Google Sheets can ignore an
+    // all-empty append when calculating the last data row, which caused every new report to
+    // reuse/overwrite the previous row. The script lock around sync_report makes this next-row
+    // allocation safe for concurrent clients.
+    row = Math.max(2, sheet.getLastRow() + 1);
   }
 
-  const existingLinks = sheet.getRange(row, 10, 1, 5).getValues()[0].map(v => String(v || ''));
+  const existingLinks = isNewRow
+    ? ['', '', '', '', '']
+    : sheet.getRange(row, 10, 1, 5).getValues()[0].map(v => String(v || ''));
+  const links = existingLinks.slice(0, 5);
   const imageResults = [];
   const imageFolder = DriveApp.getFolderById(CFG.IMAGE_FOLDER_ID);
+  const requestedImages = (images || []).slice().sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0));
 
-  (images || []).sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0)).forEach(image => {
+  requestedImages.forEach(image => {
     const sequence = Number(image.sequence || 0);
-    if (sequence < 1 || sequence > 5) return;
+    if (sequence < 1 || sequence > 5) throw new Error('Thứ tự ảnh không hợp lệ: ' + sequence + '.');
     let fileId = String(image.drive_file_id || '');
     let url = String(image.drive_link || '');
 
-    if (!fileId && existingLinks[sequence - 1]) {
-      url = existingLinks[sequence - 1];
+    if (!fileId && links[sequence - 1]) {
+      url = links[sequence - 1];
       fileId = extractDriveFileId_(url);
     }
 
@@ -256,23 +265,23 @@ function syncReport_(report, images) {
       const file = imageFolder.createFile(Utilities.newBlob(bytes, mime, name));
       fileId = file.getId();
       url = file.getUrl();
-      sheet.getRange(row, 9 + sequence).setValue(url);
-      existingLinks[sequence - 1] = url;
     }
 
+    if (!fileId || !url) throw new Error('Ảnh ' + sequence + ' chưa có file/link Drive hợp lệ sau đồng bộ.');
+    links[sequence - 1] = url;
     imageResults.push({ sequence: sequence, file_id: fileId, url: url });
   });
 
-  const links = ['', '', '', '', ''];
-  imageResults.forEach(x => { if (x.sequence >= 1 && x.sequence <= 5) links[x.sequence - 1] = x.url; });
+  if (imageResults.length !== requestedImages.length)
+    throw new Error('Số ảnh đồng bộ không khớp số ảnh được gửi.');
 
   const now = new Date();
   const values = [
-    String(report.report_id),
+    reportId,
     displayDate_(report.occurred_date),
     pad2_(report.hour) + ':' + pad2_(report.minute),
     String(report.shift || ''),
-    String(report.sku || ''),
+    sku,
     String(report.product_name || ''),
     String(report.location || ''),
     Number(report.quantity || 0),
@@ -285,9 +294,27 @@ function syncReport_(report, images) {
     String(report.updated_at || ''),
     String(report.updated_by || '')
   ];
+
+  // One full-row write prevents a half-written report and guarantees that a new report is
+  // appended exactly once while an existing report_id remains idempotently updatable.
   sheet.getRange(row, 1, 1, HEADERS.length).setValues([values]);
   SpreadsheetApp.flush();
-  return { row: row, images: imageResults };
+
+  const saved = sheet.getRange(row, 1, 1, 14).getDisplayValues()[0];
+  if (String(saved[0] || '') !== reportId || String(saved[4] || '') !== sku)
+    throw new Error('Kiểm tra sau ghi thất bại: ID/SKU trên Google Sheet không khớp phiếu gửi lên.');
+  requestedImages.forEach(image => {
+    const sequence = Number(image.sequence || 0);
+    if (!String(saved[8 + sequence] || ''))
+      throw new Error('Kiểm tra sau ghi thất bại: thiếu link Ảnh ' + sequence + ' trên Google Sheet.');
+  });
+
+  return {
+    report_id: reportId,
+    row: row,
+    image_count: imageResults.length,
+    images: imageResults
+  };
 }
 
 function findReportRow_(sheet, reportId) {

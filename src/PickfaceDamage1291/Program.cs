@@ -39,6 +39,7 @@ internal static class Program
             var main = new MainForm();
             SessionUiBinder.Bind(main);
             V130Runtime.Apply(main);
+            V131Runtime.Apply(main);
             UiRuntimeFixes.Attach(main);
             Application.Run(main);
 
