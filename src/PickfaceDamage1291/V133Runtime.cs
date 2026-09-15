@@ -99,21 +99,33 @@ internal static class AppUiStyle
         {
             flow.BeginInvoke((Action)(() =>
             {
-                state.Pending = false;
-                if (flow.IsDisposed) return;
-
-                flow.PerformLayout();
-                var bottom = flow.Padding.Top;
-                foreach (Control child in flow.Controls)
+                if (flow.IsDisposed)
                 {
-                    if (!child.Visible) continue;
-                    bottom = Math.Max(bottom, child.Bottom + child.Margin.Bottom);
+                    state.Pending = false;
+                    return;
                 }
 
-                var desired = Math.Max(1, bottom + flow.Padding.Bottom + 2);
-                if (flow.Height != desired)
-                    flow.Height = desired;
-                flow.Parent?.PerformLayout();
+                try
+                {
+                    // Keep Pending=true for the whole reflow. PerformLayout/Height changes can fire
+                    // Layout again; those nested events must not enqueue an endless BeginInvoke loop.
+                    flow.PerformLayout();
+                    var bottom = flow.Padding.Top;
+                    foreach (Control child in flow.Controls)
+                    {
+                        if (!child.Visible) continue;
+                        bottom = Math.Max(bottom, child.Bottom + child.Margin.Bottom);
+                    }
+
+                    var desired = Math.Max(1, bottom + flow.Padding.Bottom + 2);
+                    if (flow.Height != desired)
+                        flow.Height = desired;
+                    flow.Parent?.PerformLayout();
+                }
+                finally
+                {
+                    state.Pending = false;
+                }
             }));
         }
         catch
