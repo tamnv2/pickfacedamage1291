@@ -28,6 +28,7 @@ internal static class Program
 
         var main = new MainForm();
         SessionUiBinder.Bind(main);
+        UiRuntimeFixes.Attach(main);
         Application.Run(main);
 
         var session = AppSession.Current;
