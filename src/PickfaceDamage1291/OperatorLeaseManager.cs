@@ -59,13 +59,15 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
 
         for (var attempt = 0; attempt < 4; attempt++)
         {
-            var snapshot = await FirebaseClient.GetActiveOperatorSnapshotAsync(_session, ct);
-            var now = await FirebaseClient.GetServerNowMsAsync(_session, ct);
+            var snapshot = await ActiveOperatorTransport.GetSnapshotAsync(_session, ct);
+            var now = await ActiveOperatorTransport.GetServerNowMsAsync(_session, ct);
             var current = snapshot.Value;
 
             if (current is not null && string.Equals(current.SessionId, _sessionId, StringComparison.Ordinal))
             {
-                SetLease(current, "Đã xác nhận quyền nhập hiện tại.");
+                SetLease(current, ActiveOperatorTransport.IsBridgePreferred
+                    ? "Đã xác nhận quyền nhập hiện tại qua Google Gateway."
+                    : "Đã xác nhận quyền nhập hiện tại.");
                 StartMonitoring();
                 return new OperatorAcquireResult(true, "Đã xác nhận quyền nhập hiện tại.", current);
             }
@@ -100,7 +102,7 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
                 LeaseUntil = now + LeaseDurationMs
             };
 
-            if (!await FirebaseClient.PutActiveOperatorAsync(_session, lease, snapshot.ETag, ct))
+            if (!await ActiveOperatorTransport.PutAsync(_session, lease, snapshot.ETag, ct))
                 continue;
 
             SetLease(lease, current is null ? "Đã nhận quyền nhập." : "Đã chuyển quyền nhập sang phiên này.");
@@ -139,7 +141,7 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
         if (_session.OfflineMode) return false;
         try
         {
-            var snapshot = await FirebaseClient.GetActiveOperatorSnapshotAsync(_session, ct);
+            var snapshot = await ActiveOperatorTransport.GetSnapshotAsync(_session, ct);
             return snapshot.Value is null;
         }
         catch
@@ -197,7 +199,7 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
         if (!await _renewGate.WaitAsync(0, ct)) return;
         try
         {
-            var snapshot = await FirebaseClient.GetActiveOperatorSnapshotAsync(_session, ct);
+            var snapshot = await ActiveOperatorTransport.GetSnapshotAsync(_session, ct);
             if (snapshot.Value is null || !string.Equals(snapshot.Value.SessionId, _sessionId, StringComparison.Ordinal))
             {
                 RaiseKicked(snapshot.Value is null
@@ -206,7 +208,7 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
                 return;
             }
 
-            var now = await FirebaseClient.GetServerNowMsAsync(_session, ct);
+            var now = await ActiveOperatorTransport.GetServerNowMsAsync(_session, ct);
             var current = snapshot.Value;
             var renewed = new ActiveOperatorRecord
             {
@@ -220,10 +222,12 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
                 LeaseUntil = now + LeaseDurationMs
             };
 
-            if (!await FirebaseClient.PutActiveOperatorAsync(_session, renewed, snapshot.ETag, ct))
+            if (!await ActiveOperatorTransport.PutAsync(_session, renewed, snapshot.ETag, ct))
                 return;
 
-            SetLease(renewed, "Online — quyền nhập đang hoạt động.");
+            SetLease(renewed, ActiveOperatorTransport.IsBridgePreferred
+                ? "Online — quyền nhập đang hoạt động qua Google Gateway."
+                : "Online — quyền nhập đang hoạt động.");
         }
         catch (OperationCanceledException)
         {
@@ -248,7 +252,7 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
         {
             _session.OfflineMode = false;
             await FirebaseClient.EnsureFreshAsync(_session, ct);
-            var snapshot = await FirebaseClient.GetActiveOperatorSnapshotAsync(_session, ct);
+            var snapshot = await ActiveOperatorTransport.GetSnapshotAsync(_session, ct);
             if (snapshot.Value is null || !string.Equals(snapshot.Value.SessionId, _sessionId, StringComparison.Ordinal))
             {
                 RaiseKicked(snapshot.Value is null
@@ -287,6 +291,38 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
     {
         while (!ct.IsCancellationRequested && !_session.OfflineMode)
         {
+            // No SSE is available through Apps Script. While the bridge is selected, poll only
+            // the single coordination record. Direct Firebase stream is automatically retried
+            // after the bridge preference window expires.
+            if (ActiveOperatorTransport.IsBridgePreferred)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10), ct);
+                    var snapshot = await ActiveOperatorTransport.GetSnapshotAsync(_session, ct);
+                    if (snapshot.Value is null)
+                    {
+                        RaiseKicked("Phiên nhập đã bị kết thúc trên hệ thống.");
+                        return;
+                    }
+                    if (!string.Equals(snapshot.Value.SessionId, _sessionId, StringComparison.Ordinal))
+                    {
+                        RaiseKicked($"Phiên làm việc đã được chuyển sang tài khoản {snapshot.Value.Username} trên thiết bị khác.");
+                        return;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch
+                {
+                    try { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+                    catch (OperationCanceledException) { break; }
+                }
+                continue;
+            }
+
             try
             {
                 using var response = await FirebaseClient.OpenActiveOperatorStreamAsync(_session, ct);
@@ -320,8 +356,27 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
             catch
             {
                 if (ct.IsCancellationRequested) break;
-                try { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+                try
+                {
+                    // A failed stream alone must not mark the app offline. Verify the operator
+                    // record through the failover transport; this selects Google Gateway when
+                    // corporate networking is the only problem.
+                    var snapshot = await ActiveOperatorTransport.GetSnapshotAsync(_session, ct);
+                    if (snapshot.Value is null || !string.Equals(snapshot.Value.SessionId, _sessionId, StringComparison.Ordinal))
+                    {
+                        RaiseKicked(snapshot.Value is null
+                            ? "Phiên nhập đã bị kết thúc trên hệ thống."
+                            : $"Phiên làm việc đã được chuyển sang tài khoản {snapshot.Value.Username} trên thiết bị khác.");
+                        return;
+                    }
+                    await Task.Delay(TimeSpan.FromSeconds(3), ct);
+                }
                 catch (OperationCanceledException) { break; }
+                catch
+                {
+                    try { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+                    catch (OperationCanceledException) { break; }
+                }
             }
         }
     }
@@ -365,9 +420,9 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
         {
             if (!_session.OfflineMode)
             {
-                var snapshot = await FirebaseClient.GetActiveOperatorSnapshotAsync(_session);
+                var snapshot = await ActiveOperatorTransport.GetSnapshotAsync(_session);
                 if (snapshot.Value is not null && string.Equals(snapshot.Value.SessionId, _sessionId, StringComparison.Ordinal))
-                    await FirebaseClient.DeleteActiveOperatorAsync(_session, snapshot.ETag);
+                    await ActiveOperatorTransport.DeleteAsync(_session, snapshot.ETag);
                 if (normalLogout)
                     await FirebaseClient.AppendAuditAsync(_session, "OPERATOR_RELEASED", new { session = _sessionId }, _sessionId);
             }

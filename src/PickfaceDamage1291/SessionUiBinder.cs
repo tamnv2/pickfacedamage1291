@@ -99,14 +99,19 @@ internal static class SessionUiBinder
         {
             try
             {
-                var snapshot = await NetworkHttpClientFactory.RetryAsync(() => FirebaseClient.GetActiveOperatorSnapshotAsync(session), attempts: 3);
+                var snapshot = await NetworkHttpClientFactory.RetryAsync(() => ActiveOperatorTransport.GetSnapshotAsync(session), attempts: 3);
                 if (form.IsDisposed) return;
                 void Work()
                 {
                     var free = snapshot.Value is null;
                     send.Enabled = free;
                     if (status is not null)
-                        status.Text = free ? "Sẵn sàng gửi — hiện không có USER đang giữ quyền nhập." : $"Tạm khóa gửi — USER {snapshot.Value!.Username} đang giữ quyền nhập.";
+                    {
+                        var route = ActiveOperatorTransport.IsBridgePreferred ? " (qua Google Gateway)" : string.Empty;
+                        status.Text = free
+                            ? "Sẵn sàng gửi — hiện không có USER đang giữ quyền nhập." + route
+                            : $"Tạm khóa gửi — USER {snapshot.Value!.Username} đang giữ quyền nhập." + route;
+                    }
                 }
                 if (form.InvokeRequired) form.BeginInvoke((Action)Work); else Work();
             }
@@ -117,7 +122,7 @@ internal static class SessionUiBinder
                 void Work()
                 {
                     send.Enabled = false;
-                    if (status is not null) status.Text = "ADMIN vẫn có đầy đủ quyền quản trị. Chỉ tạm khóa nút Gửi vì chưa đọc được trạng thái active_operator từ Firebase.";
+                    if (status is not null) status.Text = "ADMIN vẫn có đầy đủ quyền quản trị. Chỉ tạm khóa nút Gửi vì chưa đọc được trạng thái active_operator qua cả Firebase và Google Gateway dự phòng.";
                 }
                 if (form.InvokeRequired) form.BeginInvoke((Action)Work); else Work();
             }
@@ -128,6 +133,16 @@ internal static class SessionUiBinder
         {
             while (!form.IsDisposed)
             {
+                // Corporate networks can block/intercept the Firebase SSE endpoint while Google
+                // Apps Script is still reachable. When fallback is selected, poll the tiny
+                // active_operator record instead of repeatedly opening a stream that cannot work.
+                if (ActiveOperatorTransport.IsBridgePreferred)
+                {
+                    try { await Task.Delay(TimeSpan.FromSeconds(10)); } catch { }
+                    if (!form.IsDisposed) await ApplySnapshotAsync();
+                    continue;
+                }
+
                 try
                 {
                     using var response = await FirebaseClient.OpenActiveOperatorStreamAsync(session, CancellationToken.None);
