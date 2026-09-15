@@ -42,6 +42,7 @@ internal static class UsageDashboardV147
 
     public static void Attach(MainForm main)
     {
+        AttachReportHeaderFix(main);
         AttachSnapshotHeartbeat(main);
         if (AppSession.Current?.Profile.IsAdmin != true) return;
 
@@ -141,6 +142,24 @@ internal static class UsageDashboardV147
         {
             box.Width = Math.Max(760, scroll.ClientSize.Width - scroll.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 12);
         };
+    }
+
+    private static void AttachReportHeaderFix(MainForm main)
+    {
+        foreach (var grid in FindAll<DataGridView>(main))
+        {
+            void Fix()
+            {
+                if (grid.Columns.Contains("Shift")) grid.Columns["Shift"]!.HeaderText = "Ca ghi nhận";
+            }
+
+            Fix();
+            grid.ColumnAdded += (_, e) =>
+            {
+                if (string.Equals(e.Column.Name, "Shift", StringComparison.Ordinal))
+                    e.Column.HeaderText = "Ca ghi nhận";
+            };
+        }
     }
 
     private static void AttachSnapshotHeartbeat(MainForm main)
@@ -294,7 +313,7 @@ internal static class UsageDashboardV147
             .ThenBy(x => x.Username, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
 
-        var latest = latestServerTime > 0
+        DateTimeOffset? latest = latestServerTime > 0
             ? DateTimeOffset.FromUnixTimeMilliseconds(latestServerTime).ToLocalTime()
             : null;
 
