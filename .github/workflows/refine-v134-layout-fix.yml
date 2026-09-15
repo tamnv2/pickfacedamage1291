@@ -1,0 +1,35 @@
+name: Refine v1.3.4 Layout Fix
+
+on:
+  push:
+    branches:
+      - fix/v1.3.4-layout-width-stability
+    paths:
+      - .github/workflows/refine-v134-layout-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/v1.3.4-layout-width-stability
+          fetch-depth: 0
+      - name: Refine source patch
+        run: python3 tools/refine_v134_layout_fix.py
+      - name: Remove temporary helpers
+        run: |
+          rm -f tools/refine_v134_layout_fix.py
+          rm -f .github/workflows/refine-v134-layout-fix.yml
+      - name: Commit refinement
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo "No refinement changes produced"; exit 1; }
+          git commit -m "v1.3.4: keep base flow sizing neutral"
+          git push origin HEAD:fix/v1.3.4-layout-width-stability
