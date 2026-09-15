@@ -116,8 +116,18 @@ internal static class UiRuntimeFixes
         split.Panel2.Controls.Add(images);
         tab.Controls.Add(split);
 
-        split.HandleCreated += (_, _) => ApplyStableEntrySplit(split);
-        split.SizeChanged += (_, _) => ApplyStableEntrySplit(split);
+        split.HandleCreated += (_, _) =>
+        {
+            ApplyStableEntrySplit(split);
+            FixVerticalStackWidth(left);
+        };
+        split.SizeChanged += (_, _) =>
+        {
+            ApplyStableEntrySplit(split);
+            FixVerticalStackWidth(left);
+        };
+        split.SplitterMoved += (_, _) => FixVerticalStackWidth(left);
+        left.SizeChanged += (_, _) => FixVerticalStackWidth(left);
         _entryLayoutApplied = true;
     }
 
@@ -206,17 +216,21 @@ internal static class UiRuntimeFixes
     private static void FixVerticalStackWidth(FlowLayoutPanel panel)
     {
         if (panel.IsDisposed) return;
-        var width = panel.ClientSize.Width - panel.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 12;
-        if (width < 220) return;
+
+        // FlowLayoutPanel + AutoSize GroupBox is unstable when only Width is assigned:
+        // WinForms may recalculate the preferred width back to a few pixels. Pin only the
+        // width (height stays 0/unbounded) and refresh the pin whenever the panel changes size.
+        var width = Math.Max(260,
+            panel.ClientSize.Width - panel.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 12);
 
         panel.SuspendLayout();
         try
         {
             foreach (Control child in panel.Controls)
             {
-                // Do not pin MinimumSize/MaximumSize to stale values; that caused text to collapse after resize.
-                child.MinimumSize = Size.Empty;
-                child.MaximumSize = Size.Empty;
+                var widthConstraint = new Size(width, 0);
+                child.MinimumSize = widthConstraint;
+                child.MaximumSize = widthConstraint;
                 child.Width = width;
                 if (child is GroupBox box)
                 {
