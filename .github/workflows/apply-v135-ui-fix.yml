@@ -19,8 +19,31 @@ jobs:
           ref: fix/v1.3.5-ui-button-consistency
           fetch-depth: 0
 
+      - name: Normalize version metadata for patch helper
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/PickfaceDamage1291/PickfaceDamage1291.csproj')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('    <InformationalVersion>1.3.4</InformationalVersion>\n', '')
+          p.write_text(text, encoding='utf-8', newline='\n')
+          PY
+
       - name: Apply source patch
         run: python3 scripts/patch_v135_ui.py
+
+      - name: Restore informational version metadata
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/PickfaceDamage1291/PickfaceDamage1291.csproj')
+          text = p.read_text(encoding='utf-8')
+          marker = '    <Version>1.3.5</Version>\n'
+          if marker not in text:
+              raise SystemExit('v1.3.5 Version marker missing')
+          text = text.replace(marker, marker + '    <InformationalVersion>1.3.5</InformationalVersion>\n', 1)
+          p.write_text(text, encoding='utf-8', newline='\n')
+          PY
 
       - name: Remove temporary patch helpers
         run: git rm scripts/patch_v135_ui.py .github/workflows/apply-v135-ui-fix.yml
