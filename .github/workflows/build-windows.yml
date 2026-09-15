@@ -43,6 +43,7 @@ jobs:
       - name: Verify EXE
         shell: pwsh
         run: |
+          # This check intentionally validates the complete branch head, not only the workflow change.
           if (!(Test-Path "publish/win-x64/PickfaceDamage1291.exe")) {
             throw "Không tìm thấy PickfaceDamage1291.exe sau publish"
           }
