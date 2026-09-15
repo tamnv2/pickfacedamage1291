@@ -79,7 +79,7 @@ internal static class SessionUiBinder
             }
             if (form.InvokeRequired) form.BeginInvoke((Action)Work); else Work();
         };
-        ApplyState(session.OfflineMode ? "OFFLINE — đang trong thời hạn lease dự phòng 30 phút." : "Online — tài khoản đang giữ quyền nhập duy nhất.", manager.CanCreateDamage);
+        ApplyState(session.OfflineMode ? "Offline — đang sử dụng quyền nhập dự phòng trong 30 phút." : "Sẵn sàng gửi — tài khoản đang giữ quyền nhập.", manager.CanCreateDamage);
     }
 
     private static async Task BindAdminOperatorGuardAsync(Form form, TabControl tabs, FirebaseSession session)
@@ -91,7 +91,7 @@ internal static class SessionUiBinder
         if (session.OfflineMode)
         {
             send.Enabled = false;
-            if (status is not null) status.Text = "ADMIN đang offline: không thể xác minh active_operator nên chức năng tạo phiếu bị khóa an toàn.";
+            if (status is not null) status.Text = "Tạm khóa gửi — ADMIN đang offline nên chưa thể xác minh quyền nhập.";
             return;
         }
 
@@ -106,7 +106,7 @@ internal static class SessionUiBinder
                     var free = snapshot.Value is null;
                     send.Enabled = free;
                     if (status is not null)
-                        status.Text = free ? "ADMIN: hiện không có USER giữ quyền nhập. ADMIN có thể nhập; hệ thống sẽ khóa ngay khi USER nhận active_operator." : $"ADMIN: USER {snapshot.Value!.Username} đang giữ quyền nhập. Chỉ xem, không được tạo phiếu.";
+                        status.Text = free ? "Sẵn sàng gửi — hiện không có USER đang giữ quyền nhập." : $"Tạm khóa gửi — USER {snapshot.Value!.Username} đang giữ quyền nhập.";
                 }
                 if (form.InvokeRequired) form.BeginInvoke((Action)Work); else Work();
             }
@@ -116,7 +116,7 @@ internal static class SessionUiBinder
                 void Work()
                 {
                     send.Enabled = false;
-                    if (status is not null) status.Text = "Không xác minh được active_operator — khóa Gửi để tránh hai người nhập cùng lúc.";
+                    if (status is not null) status.Text = "Tạm khóa gửi — chưa xác minh được quyền nhập. Hãy kiểm tra kết nối.";
                 }
                 if (form.InvokeRequired) form.BeginInvoke((Action)Work); else Work();
             }

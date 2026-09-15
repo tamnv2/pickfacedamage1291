@@ -157,9 +157,9 @@ internal sealed class MainForm : Form
         var layout = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, Padding = new Padding(12), ColumnCount = 2, RowCount = 2 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 190));
-        var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
+        var actions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, WrapContents = true };
         var add = NewButton("+ Thêm ảnh");
         var remove = NewButton("Xoá ảnh đã chọn");
         add.Click += (_, _) => AddImages();
@@ -182,21 +182,23 @@ internal sealed class MainForm : Form
     private GroupBox BuildSubmitSection()
     {
         var box = NewSection("4. Lưu và đồng bộ");
-        var layout = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, Padding = new Padding(12), ColumnCount = 1, RowCount = 2 };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _send.Text = "GỬI THÔNG TIN HƯ HỎNG";
-        _send.Height = 42;
-        _send.Dock = DockStyle.Top;
-        _send.Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold);
+        var form = NewFormTable(190);
+
+        _send.Text = "Gửi thông tin hư hỏng";
+        _send.AutoSize = true;
+        _send.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _send.MinimumSize = new Size(0, 40);
+        _send.Padding = new Padding(14, 4, 14, 4);
         _send.Click += async (_, _) => await SaveAndSendAsync();
+
         _entryStatus.AutoSize = true;
         _entryStatus.MaximumSize = new Size(1000, 0);
-        _entryStatus.Text = "Dữ liệu được lưu trên laptop trước. Khi mất mạng hoặc Google tạm lỗi, phiếu được giữ local để đồng bộ lại khi online.";
-        _entryStatus.Padding = new Padding(0, 8, 0, 4);
-        layout.Controls.Add(_send, 0, 0);
-        layout.Controls.Add(_entryStatus, 0, 1);
-        box.Controls.Add(layout);
+        _entryStatus.Text = "Dữ liệu được lưu trên máy trước và tự đồng bộ khi kết nối sẵn sàng.";
+        _entryStatus.Padding = new Padding(0, 7, 0, 7);
+
+        AddFormRow(form, "Thao tác", _send);
+        AddFormRow(form, "Trạng thái", _entryStatus);
+        box.Controls.Add(form);
         return box;
     }
 

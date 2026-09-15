@@ -22,11 +22,25 @@ internal sealed class AuditControl : UserControl
         Font = new Font("Segoe UI", 10F);
 
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 128));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var box = new GroupBox { Text = "Lịch sử thao tác hệ thống", Dock = DockStyle.Fill, Padding = new Padding(12) };
-        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = true };
+        var box = new GroupBox
+        {
+            Text = "Lịch sử thao tác hệ thống",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(12)
+        };
+        var tools = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = true,
+            AutoScroll = false
+        };
         var refresh = new Button { Text = "Làm mới", AutoSize = true, Height = 34, Padding = new Padding(8, 0, 8, 0) };
         refresh.Click += async (_, _) => await RefreshAsync(resetPaging: true);
 

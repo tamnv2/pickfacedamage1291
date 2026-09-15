@@ -22,8 +22,21 @@ internal static class AppUiStyle
         button.UseVisualStyleBackColor = false;
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 1;
-        button.Font = new Font("Segoe UI Semibold", Math.Max(9F, button.Font.Size), FontStyle.Bold);
+        button.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
+        button.TextAlign = ContentAlignment.MiddleCenter;
+        button.AutoEllipsis = false;
+
+        // All main UI buttons share one geometry. AutoSize + a minimum height is DPI-safe:
+        // text can grow when Windows scaling requires it, but buttons never collapse below 40 px.
+        if (button.Dock != DockStyle.Fill)
+        {
+            button.AutoSize = true;
+            button.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        }
+        button.Padding = new Padding(14, 5, 14, 5);
+        button.Margin = new Padding(4, 4, 8, 4);
+        button.MinimumSize = new Size(button.MinimumSize.Width, 40);
 
         switch (visual)
         {
