@@ -131,20 +131,35 @@ jobs:
           DEPLOYMENTS="$(npx --yes @google/clasp@3 deployments)"
           grep -Fq "$DEPLOYMENT_ID" <<<"$DEPLOYMENTS"
 
-          RESPONSE="$(curl -fsSL --retry 3 --retry-delay 2 \
-            -H 'Content-Type: application/json' \
-            --data '{"action":"gateway_info","payload":{}}' \
-            "$GATEWAY_URL")"
+          for attempt in $(seq 1 12); do
+            RESPONSE="$(curl -sSL \
+              -H 'Content-Type: application/json' \
+              --data '{"action":"gateway_info","payload":{}}' \
+              -w '\n%{http_code}' \
+              "$GATEWAY_URL" || true)"
 
-          RESPONSE="$RESPONSE" node <<'NODE'
+            HTTP_CODE="${RESPONSE##*$'\n'}"
+            BODY="${RESPONSE%$'\n'*}"
+
+            if [[ "$HTTP_CODE" == "200" ]]; then
+              if RESPONSE="$BODY" node <<'NODE'
           const data = JSON.parse(process.env.RESPONSE || '{}');
-          if (data.ok !== true) throw new Error('Gateway live không trả ok=true.');
-          if (data.version !== '1.4.5') throw new Error(`Gateway live sai version: ${data.version || 'missing'}`);
-          if (!Array.isArray(data.capabilities) || !data.capabilities.includes('rtdb_proxy')) {
-            throw new Error('Gateway live chưa có capability rtdb_proxy.');
-          }
-          console.log('Gateway live PASS: version 1.4.5, rtdb_proxy available.');
+          if (data.ok !== true) process.exit(2);
+          if (data.version !== '1.4.5') process.exit(3);
+          if (!Array.isArray(data.capabilities) || !data.capabilities.includes('rtdb_proxy')) process.exit(4);
           NODE
+              then
+                echo "Gateway live PASS: version 1.4.5, rtdb_proxy available."
+                exit 0
+              fi
+            fi
+
+            echo "Gateway live chưa sẵn sàng (lần $attempt/12, HTTP $HTTP_CODE); chờ 5 giây..."
+            sleep 5
+          done
+
+          echo "::error::Gateway live chưa trả version 1.4.5 + rtdb_proxy sau thời gian chờ propagation."
+          exit 1
 
       - name: Cleanup credentials
         if: always()
