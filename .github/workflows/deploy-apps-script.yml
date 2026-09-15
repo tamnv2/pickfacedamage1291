@@ -1,0 +1,105 @@
+name: Deploy Google Apps Script
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps-script/GoogleGateway/**'
+      - '.github/workflows/deploy-apps-script.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pickface-damage-1291-gas-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      APPS_SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      APPS_SCRIPT_DEPLOYMENT_ID: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "PROJECT_ID: 'pickface-damage-1291'" apps-script/GoogleGateway/Code.gs
+          grep -Fq "ROOT_FOLDER_ID: '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC'" apps-script/GoogleGateway/Code.gs
+          grep -Fq "const GATEWAY_VERSION = '1.4.5'" apps-script/GoogleGateway/Code.gs
+          grep -Fq "'rtdb_proxy'" apps-script/GoogleGateway/Code.gs
+
+      - name: Configure clasp
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "${CLASPRC_JSON:-}"
+          test -n "${APPS_SCRIPT_ID:-}"
+          test -n "${APPS_SCRIPT_DEPLOYMENT_ID:-}"
+
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+
+          node <<'NODE'
+          const fs = require('fs');
+          fs.writeFileSync('.clasp.json', JSON.stringify({
+            scriptId: process.env.APPS_SCRIPT_ID.trim(),
+            rootDir: 'apps-script/GoogleGateway'
+          }, null, 2));
+          NODE
+
+      - name: Verify OAuth and deployment target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npx --yes @google/clasp@3 show-authorized-user --json >/dev/null
+
+          DEPLOYMENTS="$(npx --yes @google/clasp@3 list-deployments)"
+
+          if ! grep -Fq "$APPS_SCRIPT_DEPLOYMENT_ID" <<<"$DEPLOYMENTS"; then
+            echo "::error::Deployment ID không thuộc Apps Script project đã cấu hình."
+            exit 1
+          fi
+
+      - name: Push GAS source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes @google/clasp@3 push --force
+
+      - name: Redeploy existing web app
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes @google/clasp@3 create-deployment \
+            --deploymentId "$APPS_SCRIPT_DEPLOYMENT_ID" \
+            --description "GitHub main ${GITHUB_SHA::7}"
+
+      - name: Verify deployment still exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOYMENTS="$(npx --yes @google/clasp@3 list-deployments)"
+          grep -Fq "$APPS_SCRIPT_DEPLOYMENT_ID" <<<"$DEPLOYMENTS"
+
+      - name: Cleanup credentials
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$HOME/.clasprc.json" .clasp.json
