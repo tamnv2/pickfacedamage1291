@@ -34,6 +34,12 @@ internal static class SecureSessionStore
 
     public static void Save(FirebaseSession session)
     {
+        if (!LoginPreferencesStore.ShouldPersistSession)
+        {
+            Clear();
+            return;
+        }
+
         AppPaths.EnsureCreated();
         var json = JsonSerializer.Serialize(session, JsonOptions);
         var plain = Encoding.UTF8.GetBytes(json);

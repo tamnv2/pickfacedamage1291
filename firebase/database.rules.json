@@ -32,8 +32,8 @@
       ".read": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && root.child('users').child(auth.uid).child('role').val() == 'admin'",
       ".indexOn": ["server_time"],
       "$eventId": {
-        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && !data.exists() && newData.exists() && newData.child('uid').val() == auth.uid",
-        ".validate": "newData.hasChildren(['event_id','uid','username','device_id','session_id','action','client_time','server_time']) && newData.child('event_id').val() == $eventId && newData.child('uid').val() == auth.uid && newData.child('username').val() == root.child('users').child(auth.uid).child('username').val()"
+        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && ((!data.exists() && newData.exists() && newData.child('uid').val() == auth.uid) || (data.exists() && newData.val() == null && root.child('users').child(auth.uid).child('role').val() == 'admin' && data.child('action').val() != 'AUDIT_LOGS_DELETED'))",
+        ".validate": "newData.val() == null || (newData.hasChildren(['event_id','uid','username','device_id','session_id','action','client_time','server_time']) && newData.child('event_id').val() == $eventId && newData.child('uid').val() == auth.uid && newData.child('username').val() == root.child('users').child(auth.uid).child('username').val())"
       }
     }
   }
