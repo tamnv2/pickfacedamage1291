@@ -22,8 +22,6 @@ function doPost(e) {
     const action = String(request.action || '');
     const payload = request.payload || {};
 
-    // Pre-login actions intentionally do not require an existing Firebase token.
-    // The password is forwarded only to Firebase Authentication and is never stored/logged.
     if (action === 'login_by_username') {
       return json_(loginByUsername_(String(request.username || ''), String(request.password || '')));
     }
@@ -45,6 +43,11 @@ function doPost(e) {
       verifyFixedResources_();
       if (payload.write_headers === true) ensureHeaders_();
       return json_({ ok: true, uid: auth.uid, username: auth.profile.username || '' });
+    }
+
+    if (action === 'get_image') {
+      requireImageReadPermission_(auth.profile);
+      return json_({ ok: true, ...getImage_(String(payload.file_id || '')) });
     }
 
     if (action === 'sync_report') {
@@ -192,6 +195,13 @@ function requireSyncPermission_(profile) {
   throw new Error('Tài khoản không có quyền đồng bộ thông tin hư hỏng.');
 }
 
+function requireImageReadPermission_(profile) {
+  if (String(profile.role || '').toLowerCase() === 'admin') return;
+  const p = profile.permissions || {};
+  if (p.view_reports === true || p.damage_entry === true) return;
+  throw new Error('Tài khoản không có quyền xem ảnh phiếu hư hỏng.');
+}
+
 function verifyFixedResources_() {
   DriveApp.getFolderById(CFG.ROOT_FOLDER_ID).getName();
   const imageFolder = DriveApp.getFolderById(CFG.IMAGE_FOLDER_ID);
@@ -206,7 +216,7 @@ function assertHasParent_(driveItem, parentId, label) {
   while (parents.hasNext()) {
     if (parents.next().getId() === parentId) return;
   }
-  throw new Error(label + ' không nằm trong Drive root OWNER cho phép.');
+  throw new Error(label + ' nằm ngoài phạm vi dữ liệu được phép.');
 }
 
 function ensureHeaders_() {
@@ -217,6 +227,19 @@ function ensureHeaders_() {
     if (String(current[i] || '') !== HEADERS[i]) { differs = true; break; }
   }
   if (differs) sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+}
+
+function getImage_(fileId) {
+  if (!fileId) throw new Error('Thiếu mã file ảnh.');
+  const file = DriveApp.getFileById(fileId);
+  assertHasParent_(file, CFG.IMAGE_FOLDER_ID, 'Ảnh hư hỏng');
+  const blob = file.getBlob();
+  return {
+    file_id: fileId,
+    name: file.getName(),
+    mime_type: blob.getContentType() || 'application/octet-stream',
+    data_base64: Utilities.base64Encode(blob.getBytes())
+  };
 }
 
 function syncReport_(report, images) {
@@ -230,10 +253,6 @@ function syncReport_(report, images) {
   let row = findReportRow_(sheet, reportId);
   const isNewRow = !row;
   if (!row) {
-    // Do not append an all-empty row and then call getLastRow(). Google Sheets can ignore an
-    // all-empty append when calculating the last data row, which caused every new report to
-    // reuse/overwrite the previous row. The script lock around sync_report makes this next-row
-    // allocation safe for concurrent clients.
     row = Math.max(2, sheet.getLastRow() + 1);
   }
 
@@ -288,15 +307,13 @@ function syncReport_(report, images) {
     String(report.base_unit || ''),
     links[0], links[1], links[2], links[3], links[4],
     String(report.created_at || ''),
-    Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ssXXX"),
+    Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm:ss dd/MM/yyyy'),
     String(report.created_by || ''),
     Number(report.version || 1),
     String(report.updated_at || ''),
     String(report.updated_by || '')
   ];
 
-  // One full-row write prevents a half-written report and guarantees that a new report is
-  // appended exactly once while an existing report_id remains idempotently updatable.
   sheet.getRange(row, 1, 1, HEADERS.length).setValues([values]);
   SpreadsheetApp.flush();
 
