@@ -5,7 +5,7 @@ namespace PickfaceDamage1291;
 
 internal static partial class LocationNormalizer
 {
-    [GeneratedRegex(@"(?<![\d.])(\d{1,2})\s*\.\s*(\d{1,2})(?:\s*\.\s*(\d{1,2}))?(?!\s*\.)(?!\d)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(\d{1,2})\s*\.\s*(\d{1,2})(?:\s*\.\s*(\d{1,2}))?$", RegexOptions.CultureInvariant)]
     private static partial Regex PositionRegex();
 
     public static bool TryNormalize(string? raw, out string normalized, out string error)
@@ -19,37 +19,38 @@ internal static partial class LocationNormalizer
             return false;
         }
 
-        var matches = PositionRegex().Matches(text);
-        if (matches.Count != 1)
+        // Backward compatibility only for records created by earlier versions.
+        if (text.StartsWith("LTA ", StringComparison.OrdinalIgnoreCase)) text = text[4..].Trim();
+        else if (text.StartsWith("Shelving ", StringComparison.OrdinalIgnoreCase)) text = text[9..].Trim();
+
+        var match = PositionRegex().Match(text);
+        if (!match.Success)
         {
-            error = matches.Count == 0
-                ? "Vị trí phải có dạng xx.yy hoặc xx.yy.zz. Ví dụ: 10.1, LTA 10.01, Shelving 12.2.1."
-                : "Phát hiện nhiều hơn một vị trí trong nội dung nhập. Hãy chỉ nhập một vị trí.";
+            error = "Vị trí chỉ được nhập số và dấu chấm, đúng dạng xx.yy hoặc xx.yy.zz. Ví dụ: 1.2 → 01.02; 1.2.3 → 01.02.03.";
             return false;
         }
 
-        var m = matches[0];
-        if (!int.TryParse(m.Groups[1].Value, out var a) ||
-            !int.TryParse(m.Groups[2].Value, out var b) ||
+        if (!int.TryParse(match.Groups[1].Value, out var a) ||
+            !int.TryParse(match.Groups[2].Value, out var b) ||
             a is < 0 or > 99 || b is < 0 or > 99)
         {
             error = "Vị trí không hợp lệ.";
             return false;
         }
 
-        if (!m.Groups[3].Success)
+        if (!match.Groups[3].Success)
         {
-            normalized = $"LTA {a:00}.{b:00}";
+            normalized = $"{a:00}.{b:00}";
             return true;
         }
 
-        if (!int.TryParse(m.Groups[3].Value, out var c) || c is < 0 or > 99)
+        if (!int.TryParse(match.Groups[3].Value, out var c) || c is < 0 or > 99)
         {
-            error = "Vị trí Shelving không hợp lệ.";
+            error = "Vị trí không hợp lệ.";
             return false;
         }
 
-        normalized = $"Shelving {a:00}.{b:00}.{c:00}";
+        normalized = $"{a:00}.{b:00}.{c:00}";
         return true;
     }
 }

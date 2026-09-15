@@ -33,6 +33,10 @@ function doPost(e) {
     const idToken = String(request.id_token || '');
     const auth = authenticateFirebase_(idToken);
 
+    if (action === 'change_own_email') {
+      return json_(changeOwnEmail_(auth, String(payload.current_password || ''), String(payload.new_email || '')));
+    }
+
     if (action === 'sync_login_aliases') {
       requireAdmin_(auth.profile);
       const count = syncLoginAliases_(idToken);
@@ -121,6 +125,105 @@ function passwordResetByUsername_(username) {
   return { ok: true };
 }
 
+
+function changeOwnEmail_(auth, currentPassword, newEmail) {
+  const oldEmail = String(auth.firebase_email || auth.profile.email || '').trim();
+  const username = normalizeUsername_(auth.profile.username || '');
+  newEmail = String(newEmail || '').trim().toLowerCase();
+  if (!oldEmail || !username) throw new Error('Không xác định được thông tin tài khoản hiện tại.');
+  if (!currentPassword) throw new Error('Chưa nhập mật khẩu hiện tại.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) throw new Error('Email mới không hợp lệ.');
+  if (oldEmail.toLowerCase() === newEmail.toLowerCase()) throw new Error('Email mới đang trùng email hiện tại.');
+
+  const signIn = UrlFetchApp.fetch(
+    'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + encodeURIComponent(CFG.FIREBASE_API_KEY),
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ email: oldEmail, password: currentPassword, returnSecureToken: true }),
+      muteHttpExceptions: true
+    }
+  );
+  if (signIn.getResponseCode() !== 200) throw new Error('Mật khẩu hiện tại không đúng.');
+  const signed = JSON.parse(signIn.getContentText() || '{}');
+  if (String(signed.localId || '') !== String(auth.uid || '')) throw new Error('Không xác minh được tài khoản hiện tại.');
+
+  const update = UrlFetchApp.fetch(
+    'https://identitytoolkit.googleapis.com/v1/accounts:update?key=' + encodeURIComponent(CFG.FIREBASE_API_KEY),
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ idToken: String(signed.idToken || ''), email: newEmail, returnSecureToken: true }),
+      muteHttpExceptions: true
+    }
+  );
+  if (update.getResponseCode() !== 200) {
+    const body = JSON.parse(update.getContentText() || '{}');
+    const code = body && body.error ? String(body.error.message || '') : '';
+    if (code === 'EMAIL_EXISTS') throw new Error('Email mới đã được sử dụng bởi tài khoản khác.');
+    throw new Error('Firebase không chấp nhận email mới.');
+  }
+
+  const updated = JSON.parse(update.getContentText() || '{}');
+  const newIdToken = String(updated.idToken || '');
+  if (!newIdToken) throw new Error('Firebase không trả phiên mới sau khi đổi email.');
+
+  const oldProfile = JSON.parse(JSON.stringify(auth.profile || {}));
+  const newProfile = JSON.parse(JSON.stringify(oldProfile));
+  newProfile.email = newEmail;
+
+  try {
+    const profileWrite = UrlFetchApp.fetch(
+      CFG.FIREBASE_DB_URL + '/users/' + encodeURIComponent(auth.uid) + '.json?auth=' + encodeURIComponent(newIdToken),
+      {
+        method: 'put',
+        contentType: 'application/json',
+        payload: JSON.stringify(newProfile),
+        muteHttpExceptions: true
+      }
+    );
+    if (profileWrite.getResponseCode() !== 200) throw new Error('Không cập nhật được hồ sơ tài khoản.');
+
+    PropertiesService.getScriptProperties().setProperty(aliasKey_(username), newEmail);
+    return {
+      ok: true,
+      local_id: String(updated.localId || auth.uid || ''),
+      email: newEmail,
+      id_token: newIdToken,
+      refresh_token: String(updated.refreshToken || ''),
+      expires_in: String(updated.expiresIn || '3600')
+    };
+  } catch (err) {
+    // Fail closed: try to put Authentication + RTDB + alias back to the old email.
+    try {
+      const rollback = UrlFetchApp.fetch(
+        'https://identitytoolkit.googleapis.com/v1/accounts:update?key=' + encodeURIComponent(CFG.FIREBASE_API_KEY),
+        {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify({ idToken: newIdToken, email: oldEmail, returnSecureToken: true }),
+          muteHttpExceptions: true
+        }
+      );
+      const rollbackBody = JSON.parse(rollback.getContentText() || '{}');
+      const rollbackToken = String(rollbackBody.idToken || '');
+      if (rollback.getResponseCode() === 200 && rollbackToken) {
+        UrlFetchApp.fetch(
+          CFG.FIREBASE_DB_URL + '/users/' + encodeURIComponent(auth.uid) + '.json?auth=' + encodeURIComponent(rollbackToken),
+          {
+            method: 'put',
+            contentType: 'application/json',
+            payload: JSON.stringify(oldProfile),
+            muteHttpExceptions: true
+          }
+        );
+      }
+      PropertiesService.getScriptProperties().setProperty(aliasKey_(username), oldEmail);
+    } catch (_) {}
+    throw new Error('Không thể hoàn tất đổi email. Hệ thống đã cố gắng khôi phục email cũ. ' + cleanError_(err));
+  }
+}
+
 function syncLoginAliases_(idToken) {
   const response = UrlFetchApp.fetch(
     CFG.FIREBASE_DB_URL + '/users.json?auth=' + encodeURIComponent(idToken),
@@ -180,7 +283,7 @@ function authenticateFirebase_(idToken) {
   const profile = JSON.parse(profileResponse.getContentText() || 'null');
   if (!profile || profile.active !== true) throw new Error('Tài khoản chưa được cấp quyền hoặc đã bị khóa.');
   if (String(profile.uid || user.localId) !== String(user.localId)) throw new Error('UID hồ sơ không khớp Firebase Authentication.');
-  return { uid: user.localId, profile: profile };
+  return { uid: user.localId, profile: profile, firebase_email: String(user.email || profile.email || '') };
 }
 
 function requireAdmin_(profile) {

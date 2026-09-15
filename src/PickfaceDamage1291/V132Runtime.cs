@@ -12,11 +12,9 @@ internal static class V132Runtime
         ReplaceSubmitButton(form);
         AttachBackgroundProgress(form);
         AttachReportDetails(form);
-        ApplyResponsiveEntryLayout(form);
         CleanUserFacingPresentation(form);
         AddStorageMoveAction(form);
 
-        form.Resize += (_, _) => ApplyResponsiveEntryLayout(form);
         form.Load += (_, _) => SchedulePresentationRefresh(form);
         form.Shown += (_, _) => SchedulePresentationRefresh(form);
 
@@ -49,7 +47,6 @@ internal static class V132Runtime
         {
             if (form.IsDisposed) return;
             CleanUserFacingPresentation(form);
-            ApplyResponsiveEntryLayout(form);
             AttachBackgroundProgress(form);
             AddStorageMoveAction(form);
         }));

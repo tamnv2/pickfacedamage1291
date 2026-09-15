@@ -55,6 +55,7 @@ internal static class Program
             V131Runtime.Apply(main);
             V132Runtime.Apply(main);
             UiRuntimeFixes.Attach(main);
+            V133Runtime.Apply(main);
             Application.Run(main);
 
             var storageMoveTarget = V132Runtime.ConsumeStorageMoveTarget();
