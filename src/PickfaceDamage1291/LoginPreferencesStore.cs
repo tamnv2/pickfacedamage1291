@@ -10,7 +10,7 @@ internal sealed class LoginPreferences
 
 internal static class LoginPreferencesStore
 {
-    private static readonly string FilePath = Path.Combine(AppPaths.Data, "login_preferences.json");
+    private static string FilePath => Path.Combine(AppPaths.Data, "login_preferences.json");
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     public static LoginPreferences Load()
