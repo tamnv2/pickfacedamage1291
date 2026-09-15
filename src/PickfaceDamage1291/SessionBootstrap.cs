@@ -33,14 +33,17 @@ internal static class SessionBootstrap
         AppSession.Current = session;
         AppSession.OperatorManager = manager;
         SecureSessionStore.Save(session);
+
+        // Audit is durable because AppendAuditAsync writes the local outbox before its first
+        // network await. Do not block login while old audit rows are being sent to Apps Script.
+        // The normal cloud-sync path flushes the outbox after the main window is already usable.
         try
         {
-            await FirebaseClient.AppendAuditAsync(session, "LOGIN_SUCCESS", new { role = profile.Role }, manager?.SessionId, ct);
-            await FirebaseClient.FlushAuditOutboxAsync(session, ct);
+            _ = FirebaseClient.AppendAuditAsync(session, "LOGIN_SUCCESS", new { role = profile.Role }, manager?.SessionId, CancellationToken.None);
         }
         catch
         {
-            // Audit remains in the local outbox and must not block login.
+            // Audit must never block a valid login. The local outbox remains the durable source.
         }
         return true;
     }
@@ -67,7 +70,7 @@ internal static class SessionBootstrap
         if (!manager.IsAcquired)
         {
             manager.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            MessageBox.Show(owner, "Lease offline không còn hiệu lực. Cần kết nối Internet để đăng nhập lại.", "Không thể làm offline", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(owner, "Lease offline không còn hiệu lực. Cần kết nối Internet để đăng nhập lại.", "Không thể đăng nhập offline", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
 
