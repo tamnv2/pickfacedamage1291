@@ -6,8 +6,8 @@ namespace PickfaceDamage1291;
 
 internal static class SecureSessionStore
 {
-    private static readonly string SessionFile = Path.Combine(AppPaths.Data, "firebase_session.bin");
-    private static readonly string DeviceFile = Path.Combine(AppPaths.Data, "device_id.txt");
+    private static string SessionFile => Path.Combine(AppPaths.Data, "firebase_session.bin");
+    private static string DeviceFile => Path.Combine(AppPaths.Data, "device_id.txt");
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("PickfaceDamage1291.FirebaseSession.v1");
 
