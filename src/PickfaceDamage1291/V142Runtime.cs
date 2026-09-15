@@ -139,13 +139,13 @@ internal static class V142Runtime
 
             var surface = new Panel
             {
-                Width = 455,
-                Height = 80,
-                BackColor = Color.White,
+                Width = 330,
+                Height = 68,
+                BackColor = Color.WhiteSmoke,
                 BorderStyle = BorderStyle.FixedSingle,
                 Visible = false,
                 Anchor = AnchorStyles.Right | AnchorStyles.Bottom,
-                Padding = new Padding(9),
+                Padding = new Padding(7),
                 Tag = "v142-task-progress"
             };
             var stack = new FlowLayoutPanel
@@ -154,7 +154,7 @@ internal static class V142Runtime
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 AutoScroll = false,
-                BackColor = Color.White,
+                BackColor = Color.WhiteSmoke,
                 Padding = Padding.Empty
             };
             surface.Controls.Add(stack);
@@ -171,10 +171,13 @@ internal static class V142Runtime
             Action<BackgroundSyncState> syncHandler = state =>
             {
                 if (form.IsDisposed) return;
-                if (state.Completed && state.QueueCount == 0 && !state.IsBusy)
-                    Complete(form, "background-report-sync");
-                else if (state.IsBusy || state.QueueCount > 0)
+
+                // Only show work that is actually executing. Merely waiting in a queue or an
+                // idle/status message must not occupy the progress corner.
+                if (state.IsBusy && !state.Completed)
                     Report(form, "background-report-sync", state.Message, state.Percent is > 0 and <= 100 ? state.Percent : null);
+                else
+                    Complete(form, "background-report-sync");
             };
             BackgroundSyncCoordinator.StateChanged += syncHandler;
             form.FormClosed += (_, _) => BackgroundSyncCoordinator.StateChanged -= syncHandler;
@@ -231,13 +234,14 @@ internal static class V142Runtime
 
         private static bool IsProgressText(string text)
         {
-            if (string.IsNullOrWhiteSpace(text) || !text.Contains("đang", StringComparison.OrdinalIgnoreCase)) return false;
+            // A real activity message must begin with "Đang ...". This explicitly excludes
+            // static state such as "Sẵn sàng gửi — hiện không có USER đang giữ quyền nhập".
+            if (string.IsNullOrWhiteSpace(text) || !text.StartsWith("Đang ", StringComparison.OrdinalIgnoreCase)) return false;
             var value = text.ToLowerInvariant();
-            return value.Contains("đồng bộ") || value.Contains("nhận") || value.Contains("gửi") ||
-                   value.Contains("tải") || value.Contains("ghi") || value.Contains("xuất") ||
-                   value.Contains("kiểm tra") || value.Contains("kết nối") || value.Contains("xác minh") ||
-                   value.Contains("cập nhật") || value.Contains("chuẩn bị") || value.Contains("đẩy") ||
-                   value.Contains("xử lý");
+            return value.Contains("đồng bộ") || value.Contains("gửi") || value.Contains("tải") ||
+                   value.Contains("ghi") || value.Contains("xuất") || value.Contains("nhận") ||
+                   value.Contains("cập nhật") || value.Contains("khôi phục") || value.Contains("đẩy") ||
+                   value.Contains("nhập");
         }
 
         private static int? ParsePercent(string text)
@@ -254,7 +258,7 @@ internal static class V142Runtime
         private static string CleanMessage(string text)
         {
             var value = (text ?? string.Empty).Replace("\r", " ").Replace("\n", " ").Trim();
-            return value.Length <= 150 ? value : value[..147] + "...";
+            return value.Length <= 105 ? value : value[..102] + "...";
         }
 
         private static void Rebuild(Host host)
@@ -265,7 +269,7 @@ internal static class V142Runtime
                 foreach (Control child in host.Stack.Controls.Cast<Control>().ToArray()) child.Dispose();
                 host.Stack.Controls.Clear();
 
-                var tasks = host.Tasks.Values.OrderByDescending(x => x.UpdatedUtc).Take(5).ToList();
+                var tasks = host.Tasks.Values.OrderByDescending(x => x.UpdatedUtc).Take(2).ToList();
                 if (tasks.Count == 0)
                 {
                     host.Surface.Visible = false;
@@ -274,27 +278,27 @@ internal static class V142Runtime
 
                 var title = new Label
                 {
-                    Text = "CÔNG VIỆC ĐANG XỬ LÝ",
-                    Width = 425,
-                    Height = 22,
-                    Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold),
+                    Text = "Đang xử lý",
+                    Width = 312,
+                    Height = 18,
+                    Font = new Font("Segoe UI Semibold", 8.5F, FontStyle.Bold),
                     ForeColor = Color.DimGray,
-                    Margin = new Padding(0, 0, 0, 5)
+                    Margin = new Padding(0, 0, 0, 3)
                 };
                 host.Stack.Controls.Add(title);
 
                 foreach (var task in tasks)
                 {
-                    var row = new Panel { Width = 425, Height = 52, Margin = new Padding(0, 0, 0, 6) };
+                    var row = new Panel { Width = 312, Height = 38, Margin = new Padding(0, 0, 0, 3) };
                     var label = new Label
                     {
                         Text = task.Message,
                         Dock = DockStyle.Top,
-                        Height = 29,
+                        Height = 24,
                         AutoEllipsis = true,
-                        Font = new Font("Segoe UI", 9F)
+                        Font = new Font("Segoe UI", 8.5F)
                     };
-                    var bar = new ProgressBar { Dock = DockStyle.Bottom, Height = 16 };
+                    var bar = new ProgressBar { Dock = DockStyle.Bottom, Height = 8 };
                     if (task.Percent.HasValue)
                     {
                         bar.Style = ProgressBarStyle.Continuous;
@@ -310,7 +314,7 @@ internal static class V142Runtime
                     host.Stack.Controls.Add(row);
                 }
 
-                host.Surface.Height = Math.Min(390, 40 + tasks.Count * 58);
+                host.Surface.Height = 29 + tasks.Count * 41;
                 host.Surface.Visible = true;
                 host.Surface.BringToFront();
                 Reposition(host);
@@ -324,8 +328,8 @@ internal static class V142Runtime
         private static void Reposition(Host host)
         {
             if (host.Owner.IsDisposed || host.Surface.IsDisposed) return;
-            host.Surface.Left = Math.Max(8, host.Owner.ClientSize.Width - host.Surface.Width - 18);
-            host.Surface.Top = Math.Max(8, host.Owner.ClientSize.Height - host.Surface.Height - 18);
+            host.Surface.Left = Math.Max(8, host.Owner.ClientSize.Width - host.Surface.Width - 10);
+            host.Surface.Top = Math.Max(8, host.Owner.ClientSize.Height - host.Surface.Height - 10);
             host.Surface.BringToFront();
         }
     }
