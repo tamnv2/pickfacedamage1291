@@ -36,10 +36,11 @@ internal static class SessionBootstrap
         try
         {
             await FirebaseClient.AppendAuditAsync(session, "LOGIN_SUCCESS", new { role = profile.Role }, manager?.SessionId, ct);
+            await FirebaseClient.FlushAuditOutboxAsync(session, ct);
         }
         catch
         {
-            // Audit failure must not block login.
+            // Audit remains in the local outbox and must not block login.
         }
         return true;
     }
@@ -58,6 +59,7 @@ internal static class SessionBootstrap
         {
             AppSession.Current = cached;
             AppSession.OperatorManager = null;
+            try { FirebaseClient.AppendAuditAsync(cached, "LOGIN_OFFLINE", new { role = cached.Profile.Role }).GetAwaiter().GetResult(); } catch { }
             return true;
         }
 
@@ -73,6 +75,7 @@ internal static class SessionBootstrap
         AppSession.OperatorManager = manager;
         manager.StartOfflineMonitoring();
         SecureSessionStore.Save(cached);
+        try { FirebaseClient.AppendAuditAsync(cached, "LOGIN_OFFLINE", new { role = cached.Profile.Role }, manager.SessionId).GetAwaiter().GetResult(); } catch { }
         return true;
     }
 }
