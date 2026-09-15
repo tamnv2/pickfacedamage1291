@@ -78,6 +78,7 @@ internal static class Program
             V142Runtime.Apply(main);
             V142RuntimeCorrections.Apply(main);
             V146Runtime.Apply(main);
+            V147Runtime.Apply(main);
             Application.Run(main);
 
             var storageMoveTarget = V132Runtime.ConsumeStorageMoveTarget();
@@ -168,7 +169,6 @@ internal static class Program
         catch (Exception ex)
         {
             AppLog.Exception("SESSION_CLEANUP_WARNING", ex, new Dictionary<string, object?> { ["reason"] = reason });
-            // Closing the app must not be blocked by a transient network failure.
         }
         finally
         {
