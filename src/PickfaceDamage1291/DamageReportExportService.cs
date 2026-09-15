@@ -71,6 +71,8 @@ internal static class DamageReportExportService
             var row = i + 3;
             progress?.Report($"Đang xuất {i + 1:N0}/{reports.Count:N0}: SKU {report.Sku}");
 
+            // 150 pt is about 200 px at 96 DPI. The image canvas below is intentionally
+            // smaller so every picture stays inside the visual bounds of this report row.
             ws.Row(row).Height = 150;
             ws.Cell(row, 1).Value = i + 1;
             ws.Cell(row, 2).Value = report.Sku;
@@ -200,18 +202,23 @@ internal static class DamageReportExportService
                 var sourceH = Math.Max(1, picture.OriginalHeight);
                 var scale = Math.Min(slot.Width / (double)sourceW, slot.Height / (double)sourceH);
                 scale = Math.Min(1d, Math.Max(0.02d, scale));
-                var width = Math.Max(1, (int)Math.Round(sourceW * scale));
-                var height = Math.Max(1, (int)Math.Round(sourceH * scale));
 
-                // ClosedXML 0.102 only allows resizing while the picture is FreeFloating/Move.
-                // v1.4.1 resized while the default placement was MoveAndSize, which is exactly
-                // the ArgumentException recorded in the OWNER log.
-                picture.WithPlacement(XLPicturePlacement.Move);
-                picture.WithSize(width, height);
+                // Floor rather than round so an image can never exceed its assigned slot by
+                // a rounding pixel. This guarantees that every picture remains inside column H
+                // and the report row that belongs to this SKU.
+                var width = Math.Max(1, (int)Math.Floor(sourceW * scale));
+                var height = Math.Max(1, (int)Math.Floor(sourceH * scale));
                 var x = slot.X + Math.Max(0, (slot.Width - width) / 2);
                 var y = slot.Y + Math.Max(0, (slot.Height - height) / 2);
+
+                // Keep a one-cell anchor (Move) with an explicit pixel size. Converting the same
+                // picture to MoveAndSize after MoveTo produced malformed drawing anchors that
+                // Microsoft Excel repaired from /xl/drawings/drawing1.xml in v1.4.2/v1.4.3.
+                // One-cell anchors are stable in ClosedXML 0.102 and still keep each picture tied
+                // to the image cell of the correct report row.
+                picture.WithPlacement(XLPicturePlacement.Move);
+                picture.WithSize(width, height);
                 picture.MoveTo(ws.Cell(row, ImageColumn), x, y);
-                picture.WithPlacement(XLPicturePlacement.MoveAndSize);
                 added++;
             }
             catch (Exception ex)
