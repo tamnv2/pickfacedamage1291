@@ -1,0 +1,52 @@
+name: Apply v1.4.0 Multi-device Sync
+
+on:
+  push:
+    branches:
+      - feat/v1.4.0-multidevice-sync-logs
+    paths:
+      - .github/workflows/apply-v140-sync.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/v1.4.0-multidevice-sync-logs
+          fetch-depth: 0
+
+      - name: Apply v1.4.0 source patch
+        run: python3 scripts/apply_v140.py
+
+      - name: Remove temporary patch helpers
+        run: |
+          rm -f scripts/apply_v140.py
+          rm -f .github/workflows/apply-v140-sync.yml
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj
+
+      - name: Build
+        run: dotnet build src/PickfaceDamage1291/PickfaceDamage1291.csproj -c Release --no-restore
+
+      - name: Commit patched sources
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No patch changes to commit"
+            exit 1
+          fi
+          git commit -m "v1.4.0: multi-device Sheet sync and privacy-safe Drive logs"
+          git push origin HEAD:feat/v1.4.0-multidevice-sync-logs
