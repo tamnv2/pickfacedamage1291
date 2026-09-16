@@ -1,1 +1,198 @@
-<ACTUAL_WORKFLOW_CONTENT_FROM_ANALYSIS_VARIABLE_NOT_DIRECTLY_AVAILABLE_TO_TOOL>
+name: Apply v1.4.10 Hard Delete UI Icon
+
+on:
+  push:
+    branches:
+      - fix/v1.4.10-hard-delete-ui-icon
+    paths:
+      - '.github/workflows/apply-v1410-hard-delete.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-promote:
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/v1.4.10-hard-delete-ui-icon
+          fetch-depth: 0
+
+      - name: Verify project scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'tamnv2/pickfacedamage1291' PROJECT_SCOPE_LOCK.md
+          grep -Fq '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC' PROJECT_SCOPE_LOCK.md
+          grep -Fq 'pickface-damage-1291' PROJECT_SCOPE_LOCK.md
+          grep -Fq "PROJECT_ID: 'pickface-damage-1291'" apps-script/GoogleGateway/Code.gs
+          grep -Fq "ROOT_FOLDER_ID: '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC'" apps-script/GoogleGateway/Code.gs
+          grep -Fq "GATEWAY_VERSION_V1410 = '1.4.10'" apps-script/GoogleGateway/HardDeleteV1410.gs
+
+      - name: Apply small integration patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'PATCH MARKER NOT FOUND: {path}: {old}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'apps-script/GoogleGateway/Code.gs',
+              'function doPost(e) {',
+              'function doPostLegacy_(e) {'
+          )
+
+          replace_once(
+              'src/PickfaceDamage1291/Program.cs',
+              '            V148Runtime.Apply(main);\n            Application.Run(main);',
+              '            V148Runtime.Apply(main);\n            V1410Runtime.Apply(main);\n            Application.Run(main);'
+          )
+
+          project = Path('src/PickfaceDamage1291/PickfaceDamage1291.csproj')
+          text = project.read_text(encoding='utf-8')
+          for old, new in [
+              ('<Version>1.4.9</Version>', '<Version>1.4.10</Version>'),
+              ('<InformationalVersion>1.4.9</InformationalVersion>', '<InformationalVersion>1.4.10</InformationalVersion>'),
+              ('<AssemblyVersion>1.4.9.0</AssemblyVersion>', '<AssemblyVersion>1.4.10.0</AssemblyVersion>'),
+              ('<FileVersion>1.4.9.0</FileVersion>', '<FileVersion>1.4.10.0</FileVersion>')
+          ]:
+              if old not in text:
+                  raise SystemExit(f'VERSION MARKER NOT FOUND: {old}')
+              text = text.replace(old, new, 1)
+          marker = '    <FileVersion>1.4.10.0</FileVersion>\n'
+          if marker not in text:
+              raise SystemExit('ApplicationIcon insertion marker missing')
+          text = text.replace(marker, marker + '    <ApplicationIcon>Assets\\PickfaceDamage1291.ico</ApplicationIcon>\n', 1)
+          project.write_text(text, encoding='utf-8')
+
+          replace_once(
+              'src/PickfaceDamage1291/GoogleGatewayV140.cs',
+              'var required = new[] { "pull_changes", "push_products", "pull_products", "append_audit", "list_audit", "delete_audit_range", "upload_log", "sync_report", "get_image" };',
+              'var required = new[] { "pull_changes", "push_products", "pull_products", "append_audit", "list_audit", "delete_audit_range", "upload_log", "sync_report", "hard_delete_reports", "get_image" };'
+          )
+          replace_once(
+              'src/PickfaceDamage1291/GoogleGatewayV140.cs',
+              'Hãy deploy Code.gs v1.4.1 vào đúng deployment /exec đang dùng.',
+              'Hãy deploy gateway v1.4.10 vào đúng deployment /exec đang dùng.'
+          )
+
+          deploy = Path('.github/workflows/deploy-apps-script.yml')
+          text = deploy.read_text(encoding='utf-8')
+          source_marker = '          grep -Fq "const GATEWAY_VERSION = \'1.4.5\'" apps-script/GoogleGateway/Code.gs\n'
+          if source_marker not in text:
+              raise SystemExit('deploy source marker missing')
+          text = text.replace(
+              source_marker,
+              source_marker + '          grep -Fq "GATEWAY_VERSION_V1410 = \'1.4.10\'" apps-script/GoogleGateway/HardDeleteV1410.gs\n          grep -Fq "hard_delete_reports" apps-script/GoogleGateway/HardDeleteV1410.gs\n',
+              1
+          )
+          pairs = [
+              ("if (data.version !== '1.4.5') process.exit(3);", "if (data.version !== '1.4.10') process.exit(3);"),
+              ("if (!Array.isArray(data.capabilities) || !data.capabilities.includes('rtdb_proxy')) process.exit(4);", "if (!Array.isArray(data.capabilities) || !data.capabilities.includes('rtdb_proxy') || !data.capabilities.includes('hard_delete_reports')) process.exit(4);"),
+              ('Gateway live PASS: version 1.4.5, rtdb_proxy available.', 'Gateway live PASS: version 1.4.10, hard_delete_reports + rtdb_proxy available.'),
+              ('Gateway live chưa trả version 1.4.5 + rtdb_proxy sau thời gian chờ propagation.', 'Gateway live chưa trả version 1.4.10 + hard_delete_reports + rtdb_proxy sau thời gian chờ propagation.')
+          ]
+          for old, new in pairs:
+              if old not in text:
+                  raise SystemExit(f'deploy live marker missing: {old}')
+              text = text.replace(old, new, 1)
+          deploy.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Generate desktop icon
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          .\tools\GenerateAppIcon.ps1
+          $icon = Get-Item 'src/PickfaceDamage1291/Assets/PickfaceDamage1291.ico'
+          if ($icon.Length -lt 1000) { throw 'Generated ICO is unexpectedly small.' }
+
+      - name: Validate Apps Script syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat apps-script/GoogleGateway/Code.gs apps-script/GoogleGateway/HardDeleteV1410.gs > "$RUNNER_TEMP/GoogleGateway-v1410.js"
+          node --check "$RUNNER_TEMP/GoogleGateway-v1410.js"
+          grep -Fq 'function doPostLegacy_(e)' apps-script/GoogleGateway/Code.gs
+          grep -Fq 'function doPost(e)' apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq 'DAMAGE_REPORT_HARD_DELETED' apps-script/GoogleGateway/HardDeleteV1410.gs
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj
+
+      - name: Publish portable EXE
+        run: >
+          dotnet publish src/PickfaceDamage1291/PickfaceDamage1291.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -o out/win-x64
+
+      - name: Verify build
+        shell: powershell
+        run: |
+          $exe = Get-Item 'out/win-x64/PickfaceDamage1291.exe'
+          if ($exe.Length -lt 1MB) { throw 'EXE output is unexpectedly small.' }
+          $ico = Get-Item 'src/PickfaceDamage1291/Assets/PickfaceDamage1291.ico'
+          if ($ico.Length -lt 1000) { throw 'ICO missing or invalid.' }
+          if (-not (Select-String -Path 'src/PickfaceDamage1291/PickfaceDamage1291.csproj' -Pattern 'ApplicationIcon')) { throw 'ApplicationIcon not configured.' }
+
+      - name: Commit verified staging tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            apps-script/GoogleGateway/Code.gs \
+            apps-script/GoogleGateway/HardDeleteV1410.gs \
+            .github/workflows/deploy-apps-script.yml \
+            src/PickfaceDamage1291/Program.cs \
+            src/PickfaceDamage1291/PickfaceDamage1291.csproj \
+            src/PickfaceDamage1291/GoogleGatewayV140.cs \
+            src/PickfaceDamage1291/V1410Runtime.cs \
+            src/PickfaceDamage1291/Assets/PickfaceDamage1291.ico \
+            tools/GenerateAppIcon.ps1
+          git diff --cached --check
+          git commit -m 'release v1.4.10 hard delete UI and icon'
+          PATCH_COMMIT="$(git rev-parse HEAD)"
+          echo "PATCH_COMMIT=$PATCH_COMMIT" >> "$GITHUB_ENV"
+          git push origin HEAD:fix/v1.4.10-hard-delete-ui-icon
+
+      - name: Promote verified files to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B promote-main origin/main
+          git checkout "$PATCH_COMMIT" -- \
+            apps-script/GoogleGateway/Code.gs \
+            apps-script/GoogleGateway/HardDeleteV1410.gs \
+            .github/workflows/deploy-apps-script.yml \
+            src/PickfaceDamage1291/Program.cs \
+            src/PickfaceDamage1291/PickfaceDamage1291.csproj \
+            src/PickfaceDamage1291/GoogleGatewayV140.cs \
+            src/PickfaceDamage1291/V1410Runtime.cs \
+            src/PickfaceDamage1291/Assets/PickfaceDamage1291.ico \
+            tools/GenerateAppIcon.ps1
+          git add -A
+          git diff --cached --check
+          git commit -m 'release v1.4.10 hard delete UI and icon'
+          git push origin HEAD:main
