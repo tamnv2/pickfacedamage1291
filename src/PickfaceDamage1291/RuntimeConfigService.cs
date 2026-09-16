@@ -10,31 +10,54 @@ internal static class RuntimeConfigService
 
     public static string GoogleGatewayUrl { get; private set; } = BuiltInGatewayUrl;
     public static bool IsGoogleGatewayConfigured => IsApprovedGatewayUrl(GoogleGatewayUrl);
+    public static bool GitHubRuntimeConfigReachable { get; private set; }
 
     public static async Task InitializeAsync(CancellationToken ct = default)
     {
-        // The Google gateway URL is public metadata, not a credential. Keep the approved endpoint
-        // built into the EXE so a corporate network that allows Google but blocks GitHub does not
-        // accidentally disable the whole application. GitHub runtime-config remains an optional
-        // way to update the public endpoint without rebuilding the EXE.
+        // The approved Google endpoint is always built in. GitHub only acts as optional public metadata
+        // and as a route hint: on a Google-only Office network we immediately keep Firebase RTDB on the
+        // Apps Script relay instead of waiting for repeated direct Firebase timeouts.
         GoogleGatewayUrl = BuiltInGatewayUrl;
+        GitHubRuntimeConfigReachable = false;
         try
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            linked.CancelAfter(TimeSpan.FromSeconds(6));
+            linked.CancelAfter(TimeSpan.FromSeconds(5));
             using var response = await Http.GetAsync(ConfigUrl, linked.Token);
-            if (!response.IsSuccessStatusCode) return;
+            if (!response.IsSuccessStatusCode)
+            {
+                SelectGoogleOnlyRoute($"github_runtime_config_http_{(int)response.StatusCode}");
+                return;
+            }
+
+            GitHubRuntimeConfigReachable = true;
             var json = await response.Content.ReadAsStringAsync(linked.Token);
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("google_gateway_url", out var node)) return;
-            var candidate = (node.GetString() ?? string.Empty).Trim();
-            if (IsApprovedGatewayUrl(candidate)) GoogleGatewayUrl = candidate;
+            if (doc.RootElement.TryGetProperty("google_gateway_url", out var node))
+            {
+                var candidate = (node.GetString() ?? string.Empty).Trim();
+                if (IsApprovedGatewayUrl(candidate)) GoogleGatewayUrl = candidate;
+            }
+
+            AppLog.Info("CONNECTIVITY_ROUTE_HINT", "GitHub truy cập được; Firebase ưu tiên direct và tự fallback Google khi cần.",
+                new Dictionary<string, object?> { ["mode"] = "adaptive_direct_first" });
         }
         catch (Exception ex)
         {
             AppLog.Warning("RUNTIME_CONFIG_FETCH_FAILED", NetworkHttpClientFactory.Friendly(ex, "GitHub runtime config"));
-            // Built-in approved Google endpoint remains active.
+            SelectGoogleOnlyRoute("github_runtime_config_unreachable");
         }
+    }
+
+    private static void SelectGoogleOnlyRoute(string reason)
+    {
+        NetworkHttpClientFactory.PreferRtdbRelayForCurrentNetwork(reason);
+        AppLog.Info("CONNECTIVITY_ROUTE_HINT", "Mạng hiện tại không truy cập được GitHub; ưu tiên Google Gateway/RTDB relay cho phiên mạng này.",
+            new Dictionary<string, object?>
+            {
+                ["mode"] = "google_only_restricted",
+                ["reason"] = reason
+            });
     }
 
     private static bool IsApprovedGatewayUrl(string value)
