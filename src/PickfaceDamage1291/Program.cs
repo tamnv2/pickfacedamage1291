@@ -79,6 +79,7 @@ internal static class Program
             V142RuntimeCorrections.Apply(main);
             V146Runtime.Apply(main);
             V147Runtime.Apply(main);
+            V148Runtime.Apply(main);
             Application.Run(main);
 
             var storageMoveTarget = V132Runtime.ConsumeStorageMoveTarget();
