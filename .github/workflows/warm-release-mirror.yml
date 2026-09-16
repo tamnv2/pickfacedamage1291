@@ -1,0 +1,68 @@
+name: Warm Google Drive Release Mirror
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pickface-damage-1291-release-mirror
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    if: github.repository == 'tamnv2/pickfacedamage1291'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      APPS_SCRIPT_DEPLOYMENT_ID: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID || vars.APPS_SCRIPT_DEPLOYMENT_ID }}
+
+    steps:
+      - name: Verify fixed project scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${APPS_SCRIPT_DEPLOYMENT_ID:-}"
+          RAW_DEPLOY="${APPS_SCRIPT_DEPLOYMENT_ID%%\?*}"
+          if [[ "$RAW_DEPLOY" == https://script.google.com/macros/s/* ]]; then
+            DEPLOYMENT_ID="${RAW_DEPLOY#https://script.google.com/macros/s/}"
+            DEPLOYMENT_ID="${DEPLOYMENT_ID%%/*}"
+          else
+            DEPLOYMENT_ID="$RAW_DEPLOY"
+          fi
+          test -n "$DEPLOYMENT_ID"
+          printf 'GATEWAY_URL=https://script.google.com/macros/s/%s/exec\n' "$DEPLOYMENT_ID" >> "$GITHUB_ENV"
+
+      - name: Warm latest release into approved Drive root
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 18); do
+            echo "Mirror warm attempt $attempt/18"
+            BODY="$(curl -sSL --max-time 330 \
+              -H 'Content-Type: application/json' \
+              --data '{"action":"warm_release_mirror","payload":{}}' \
+              "$GATEWAY_URL" || true)"
+
+            if RESPONSE="$BODY" node <<'NODE'
+          const raw = process.env.RESPONSE || '';
+          let data;
+          try { data = JSON.parse(raw); } catch (_) { process.exit(2); }
+          if (data.ok !== true) process.exit(3);
+          if (data.mirror_ready !== true) process.exit(4);
+          if (!data.tag || !data.asset_name || !/^sha256:[0-9a-f]{64}$/i.test(data.digest || '')) process.exit(5);
+          NODE
+            then
+              echo "Google Drive release mirror PASS."
+              exit 0
+            fi
+
+            echo "Mirror chưa sẵn sàng; chờ 10 giây..."
+            sleep 10
+          done
+
+          echo "::error::Không warm được release mirror qua Google gateway sau 18 lần thử."
+          exit 1
