@@ -1,0 +1,155 @@
+name: Apply v1.4.12 Office Connectivity Source Patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v1412-office-source-patch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.repository == 'tamnv2/pickfacedamage1291'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify fixed project scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'tamnv2/pickfacedamage1291' PROJECT_SCOPE_LOCK.md
+          grep -Fq '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC' PROJECT_SCOPE_LOCK.md
+          grep -Fq 'pickface-damage-1291' PROJECT_SCOPE_LOCK.md
+
+      - name: Patch connectivity source
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def load(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def save(path, body):
+              Path(path).write_text(body, encoding='utf-8')
+
+          def replace_once(path, old, new):
+              body = load(path)
+              if body.count(old) != 1:
+                  raise SystemExit(f'{path}: expected one marker, found {body.count(old)}')
+              save(path, body.replace(old, new, 1))
+
+          def replace_between(path, start, end, replacement):
+              body = load(path)
+              i = body.find(start)
+              if i < 0:
+                  raise SystemExit(f'{path}: start marker missing')
+              j = body.find(end, i + len(start))
+              if j < 0:
+                  raise SystemExit(f'{path}: end marker missing')
+              save(path, body[:i] + replacement.rstrip() + '\n\n' + body[j:])
+
+          network = 'src/PickfaceDamage1291/NetworkHttpClientFactory.cs'
+          body = load(network)
+          marker = 'private static readonly TimeSpan RtdbRelayCooldown = TimeSpan.FromMinutes(2);'
+          if marker not in body:
+              raise SystemExit('RTDB relay cooldown marker missing')
+          body = body.replace(marker, 'private static readonly TimeSpan RtdbRelayCooldown = TimeSpan.FromHours(8);', 1)
+          body = body.replace('PreferRtdbRelay(', 'PreferRtdbRelayForCurrentNetwork(')
+          sig = 'private static void PreferRtdbRelayForCurrentNetwork(string reason)'
+          if sig not in body:
+              raise SystemExit('RTDB relay method marker missing')
+          body = body.replace(sig, 'internal static void PreferRtdbRelayForCurrentNetwork(string reason)', 1)
+          save(network, body)
+
+          firebase = 'src/PickfaceDamage1291/FirebaseClient.cs'
+          replace_between(
+              firebase,
+              '    public static async Task EnsureFreshAsync(FirebaseSession session, CancellationToken ct = default)',
+              '    public static async Task SendPasswordResetAsync(string email, CancellationToken ct = default)',
+              '''    public static async Task EnsureFreshAsync(FirebaseSession session, CancellationToken ct = default)\n    {\n        if (session.OfflineMode) return;\n        if (!string.IsNullOrWhiteSpace(session.IdToken) && session.AccessTokenExpiresUtc > DateTime.UtcNow.AddMinutes(2)) return;\n        if (string.IsNullOrWhiteSpace(session.RefreshToken))\n            throw new InvalidOperationException("Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.");\n\n        await RefreshGate.WaitAsync(ct);\n        try\n        {\n            if (!string.IsNullOrWhiteSpace(session.IdToken) && session.AccessTokenExpiresUtc > DateTime.UtcNow.AddMinutes(2)) return;\n            await OfficeAuthGatewayV1412.RefreshSessionAsync(session, ct);\n        }\n        finally\n        {\n            RefreshGate.Release();\n        }\n    }''')
+
+          replace_between(
+              firebase,
+              '    public static async Task SendPasswordResetAsync(string email, CancellationToken ct = default)',
+              '    public static async Task<FirebaseUserProfile?> GetProfileAsync(string uid, string idToken, CancellationToken ct = default)',
+              '''    public static async Task SendPasswordResetAsync(string email, CancellationToken ct = default)\n    {\n        var username = AppSession.Current?.Profile.Username;\n        if (!string.IsNullOrWhiteSpace(username))\n        {\n            await UsernameAuthService.SendPasswordResetAsync(username, ct);\n            return;\n        }\n\n        EnsureConfigured();\n        var payload = new { requestType = "PASSWORD_RESET", email = email.Trim() };\n        using var response = await Http.PostAsync(\n            $"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={Uri.EscapeDataString(ApiKey)}",\n            JsonContent(payload), ct);\n        var body = await response.Content.ReadAsStringAsync(ct);\n        if (!response.IsSuccessStatusCode)\n            throw new InvalidOperationException(ToFriendlyAuthError(body, "Không gửi được email lấy lại mật khẩu."));\n    }''')
+
+          replace_between(
+              firebase,
+              '    public static async Task<FirebaseUserProfile> CreateUserAsync(',
+              '    public static async Task UpdateUserProfileAsync(',
+              '''    public static async Task<FirebaseUserProfile> CreateUserAsync(\n        FirebaseSession adminSession,\n        string email,\n        string username,\n        string displayName,\n        Dictionary<string, bool> permissions,\n        CancellationToken ct = default)\n    {\n        await EnsureFreshAsync(adminSession, ct);\n        var profile = await OfficeAuthGatewayV1412.CreateUserAsync(\n            adminSession, email, username, displayName, permissions, ct);\n        await AppendAuditAsync(adminSession, "USER_CREATED", new\n        {\n            target_uid = profile.Uid,\n            username = profile.Username,\n            email = profile.Email,\n            transport = "google_gateway"\n        }, ct: ct);\n        return profile;\n    }''')
+
+          replace_once(
+              'src/PickfaceDamage1291/SessionBootstrap.cs',
+              '        session.Email = profile.Email;\n\n        OperatorLeaseManager? manager = null;',
+              '        session.Email = profile.Email;\n\n        AppLog.Info("CONNECTIVITY_ONLINE_READY", "Đã xác thực online và chọn đường kết nối cho mạng hiện tại.", new Dictionary<string, object?>\n        {\n            ["firebase_rtdb_route"] = NetworkHttpClientFactory.IsRtdbRelayPreferred ? "google_relay" : "direct_firebase",\n            ["github_runtime_config_reachable"] = RuntimeConfigService.GitHubRuntimeConfigReachable,\n            ["google_gateway"] = RuntimeConfigService.IsGoogleGatewayConfigured\n        });\n\n        OperatorLeaseManager? manager = null;')
+
+          replace_once(
+              'src/PickfaceDamage1291/AutoLoginService.cs',
+              '        catch\n        {\n            if (!preferences.AllowOfflineLogin) return false;\n            try { return SessionBootstrap.PrepareOffline(cached); }\n            catch { return false; }\n        }',
+              '        catch (Exception ex)\n        {\n            AppLog.Exception("AUTO_LOGIN_ONLINE_FAILED", ex, new Dictionary<string, object?>\n            {\n                ["firebase_rtdb_route"] = NetworkHttpClientFactory.IsRtdbRelayPreferred ? "google_relay" : "direct_firebase",\n                ["github_runtime_config_reachable"] = RuntimeConfigService.GitHubRuntimeConfigReachable\n            });\n            if (!preferences.AllowOfflineLogin) return false;\n            try { return SessionBootstrap.PrepareOffline(cached); }\n            catch { return false; }\n        }')
+
+          replace_once(
+              'src/PickfaceDamage1291/OperatorLeaseManager.cs',
+              '        catch\n        {\n            _session.OfflineMode = true;\n            SecureSessionStore.Save(_session);\n            StateChanged?.Invoke("Mất kết nối — chuyển sang thời gian dự phòng offline tối đa 30 phút.", IsOfflineLeaseStillValid());\n            EvaluateOfflineDeadline();\n        }',
+              '        catch (Exception ex)\n        {\n            AppLog.Exception("OPERATOR_HEARTBEAT_ONLINE_FAILED", ex, new Dictionary<string, object?>\n            {\n                ["firebase_rtdb_route"] = NetworkHttpClientFactory.IsRtdbRelayPreferred ? "google_relay" : "direct_firebase"\n            });\n            _session.OfflineMode = true;\n            SecureSessionStore.Save(_session);\n            StateChanged?.Invoke("Mất kết nối — chuyển sang thời gian dự phòng offline tối đa 30 phút.", IsOfflineLeaseStillValid());\n            EvaluateOfflineDeadline();\n        }')
+
+          for path, markers in {
+              network: ['TimeSpan.FromHours(8)', 'internal static void PreferRtdbRelayForCurrentNetwork'],
+              firebase: ['OfficeAuthGatewayV1412.RefreshSessionAsync', 'OfficeAuthGatewayV1412.CreateUserAsync'],
+              'src/PickfaceDamage1291/SessionBootstrap.cs': ['CONNECTIVITY_ONLINE_READY'],
+              'src/PickfaceDamage1291/AutoLoginService.cs': ['AUTO_LOGIN_ONLINE_FAILED'],
+              'src/PickfaceDamage1291/OperatorLeaseManager.cs': ['OPERATOR_HEARTBEAT_ONLINE_FAILED']
+          }.items():
+              body = load(path)
+              for marker in markers:
+                  if marker not in body:
+                      raise SystemExit(f'{path}: missing post-patch marker {marker}')
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'tamnv2'
+          git config user.email 'nguyenvantam050595@gmail.com'
+          git add src/PickfaceDamage1291
+          if git diff --cached --quiet; then
+            echo 'Source already patched.'
+            exit 0
+          fi
+          git commit -m 'fix adaptive Office Firebase connectivity'
+          git push origin HEAD:main
+
+  build:
+    needs: patch
+    runs-on: windows-latest
+    steps:
+      - name: Checkout patched main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore
+        run: dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj
+      - name: Publish compile verification
+        run: >-
+          dotnet publish src/PickfaceDamage1291/PickfaceDamage1291.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -o publish/win-x64
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
