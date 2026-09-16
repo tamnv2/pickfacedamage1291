@@ -43,6 +43,18 @@ function doPost(e) {
       return json_({ ok:true, ...deleteAuditRangeV1410_(auth, payload) });
     }
 
+    if (action === 'release_mirror_manifest') {
+      return json_({ ok:true, ...releaseMirrorManifestV1411_(payload) });
+    }
+
+    if (action === 'release_mirror_chunk') {
+      return json_({ ok:true, ...releaseMirrorChunkV1411_(payload) });
+    }
+
+    if (action === 'warm_release_mirror') {
+      return json_({ ok:true, ...warmLatestReleaseMirrorV1411_() });
+    }
+
     return doPostLegacy_(e);
   } catch (err) {
     return json_({ ok:false, error:cleanError_(err) });
