@@ -7,7 +7,10 @@ internal static partial class AppLog
 {
     private const long MaxFileBytes = 4L * 1024 * 1024;
     private static readonly object Gate = new();
+    private static readonly DateTime ProcessStartedAt = DateTime.Now;
     private static bool _initialized;
+    private static string? _currentWritablePath;
+    private static int _partIndex = 1;
 
     [GeneratedRegex("(?i)(authorization\\s*[:=]\\s*bearer\\s+)[^\\s,;]+")]
     private static partial Regex BearerRegex();
@@ -30,7 +33,11 @@ internal static partial class AppLog
             Directory.CreateDirectory(AppPaths.Logs);
             _initialized = true;
         }
-        Info("APP_LOG_READY", "Hệ thống log local đã sẵn sàng.");
+        Info("APP_LOG_READY", "Hệ thống log local realtime đã sẵn sàng.", new Dictionary<string, object?>
+        {
+            ["process_started_at"] = ProcessStartedAt,
+            ["log_file"] = Path.GetFileName(GetCurrentWritablePathForInfo())
+        });
     }
 
     public static void Info(string eventName, string message, IReadOnlyDictionary<string, object?>? details = null)
@@ -72,6 +79,8 @@ internal static partial class AppLog
                     if (File.Exists(sealedPath))
                         sealedPath = file + "." + Guid.NewGuid().ToString("N") + ".send";
                     File.Move(file, sealedPath);
+                    if (string.Equals(_currentWritablePath, file, StringComparison.OrdinalIgnoreCase))
+                        _currentWritablePath = null;
                 }
                 catch
                 {
@@ -137,12 +146,16 @@ internal static partial class AppLog
                 }
             }
 
+            var username = string.Empty;
+            try { username = AppSession.Current?.Profile.Username ?? string.Empty; } catch { }
+
             var entry = new Dictionary<string, object?>
             {
                 ["time"] = DateTimeOffset.Now.ToString("O"),
                 ["level"] = level,
                 ["event"] = SanitizeText(eventName),
                 ["message"] = SanitizeText(message),
+                ["username"] = SanitizeText(username, 200),
                 ["device_id"] = SafeDeviceId(),
                 ["version"] = VersionUpdateService.CurrentVersionText,
                 ["details"] = safeDetails.Count == 0 ? null : safeDetails
@@ -181,9 +194,37 @@ internal static partial class AppLog
 
     private static string WritablePathLocked()
     {
-        var basePath = Path.Combine(AppPaths.Logs, $"pickface_{DateTime.Now:yyyyMMdd}.log");
-        if (!File.Exists(basePath) || new FileInfo(basePath).Length < MaxFileBytes) return basePath;
-        return Path.Combine(AppPaths.Logs, $"pickface_{DateTime.Now:yyyyMMdd_HHmmss_fff}.log");
+        if (string.IsNullOrWhiteSpace(_currentWritablePath))
+            _currentWritablePath = BuildProcessLogPath(_partIndex);
+
+        if (!File.Exists(_currentWritablePath) || new FileInfo(_currentWritablePath).Length < MaxFileBytes)
+            return _currentWritablePath;
+
+        _partIndex++;
+        _currentWritablePath = BuildProcessLogPath(_partIndex);
+        return _currentWritablePath;
+    }
+
+    private static string BuildProcessLogPath(int partIndex)
+    {
+        var device = SafeFilePart(SafeDeviceId());
+        var prefix = $"pickface_{ProcessStartedAt:yyyyMMdd_HHmmss_fff}_{device}";
+        var suffix = partIndex <= 1 ? string.Empty : $"_part{partIndex:00}";
+        return Path.Combine(AppPaths.Logs, prefix + suffix + ".log");
+    }
+
+    private static string GetCurrentWritablePathForInfo()
+    {
+        lock (Gate)
+            return WritablePathLocked();
+    }
+
+    private static string SafeFilePart(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = (value ?? string.Empty).Select(c => invalid.Contains(c) ? '-' : c).ToArray();
+        var safe = new string(chars).Trim().Trim('.');
+        return string.IsNullOrWhiteSpace(safe) ? "unknown-device" : safe;
     }
 
     private static string DisplayUploadName(string sealedName)
