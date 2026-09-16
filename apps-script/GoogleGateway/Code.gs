@@ -18,7 +18,7 @@ const HEADERS = [
   'Thời gian nhập', 'Thời gian đồng bộ', 'Người tạo', 'Phiên bản', 'Cập nhật lúc', 'Cập nhật bởi'
 ];
 
-function doPost(e) {
+function doPostLegacy_(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) throw new Error('Thiếu request body.');
     const request = JSON.parse(e.postData.contents);
