@@ -1,0 +1,155 @@
+name: Apply v1.4.18 Office Transition Regression Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v1418-office-transition-regression-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.repository == 'tamnv2/pickfacedamage1291'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify fixed project scope and source baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'tamnv2/pickfacedamage1291' PROJECT_SCOPE_LOCK.md
+          grep -Fq '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC' PROJECT_SCOPE_LOCK.md
+          grep -Fq 'pickface-damage-1291' PROJECT_SCOPE_LOCK.md
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/NetworkHttpClientFactory.cs)" = 'f37463a171f19ae4a213184d290e96b9913136f8'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/V142Runtime.cs)" = 'fd41ce9a49a3d7deac05eb2698783476fa5a633c'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/GoogleGatewayV140.cs)" = '4206a0018d17876d30009d3540d840f6de9c27e8'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/PickfaceDamage1291.csproj)" = '88340a4874d7660491cfc9da5f40a9ee97fcc787'
+
+      - name: Apply targeted v1.4.18 regression fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              p.write_text(s.replace(old, new, 1), encoding='utf-8', newline='')
+
+          # 1) Restore the v1.4.16 connection-pool behavior that was stable on Office transitions.
+          replace_once(
+              'src/PickfaceDamage1291/NetworkHttpClientFactory.cs',
+              '''        PooledConnectionLifetime = TimeSpan.FromSeconds(15),\n        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),\n        ConnectTimeout = TimeSpan.FromSeconds(8)\n''',
+              '''        PooledConnectionLifetime = TimeSpan.FromSeconds(5),\n        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(5),\n        ConnectTimeout = TimeSpan.FromSeconds(12)\n''',
+              'network pool rollback')
+
+          # Do not clear a known-good relay route while Windows is still in the unavailable/address storm.
+          replace_once(
+              'src/PickfaceDamage1291/NetworkHttpClientFactory.cs',
+              '''        // Route state is invalid immediately, but expensive recovery work is emitted only once\n        // after Windows finishes its burst of address/availability notifications.\n        Interlocked.Exchange(ref _rtdbRelayUntilUtcTicks, 0);\n        lock (NetworkChangeGate)\n''',
+              '''        // Windows emits address/unavailable/available bursts while adapters, DNS and PAC/proxy\n        // are still changing. Keep the last known-safe route until a stable available state wins.\n        lock (NetworkChangeGate)\n''',
+              'relay route retention')
+
+          replace_once(
+              'src/PickfaceDamage1291/NetworkHttpClientFactory.cs',
+              '''                    try\n                    {\n                        AppLog.Info("NETWORK_CHANGED", "Windows đã ổn định sau cụm thay đổi kết nối mạng.",\n                            new Dictionary<string, object?> { ["state"] = finalState });\n                    }\n                    catch { }\n\n                    try { NetworkChanged?.Invoke(); } catch { }\n''',
+              '''                    try\n                    {\n                        AppLog.Info("NETWORK_CHANGED", "Windows đã ổn định sau cụm thay đổi kết nối mạng.",\n                            new Dictionary<string, object?> { ["state"] = finalState });\n                    }\n                    catch { }\n\n                    // Never start recovery while Windows still reports unavailable. This was the\n                    // v1.4.17 regression: the unavailable recovery occupied the gate and the real\n                    // available event could be dropped while DNS/proxy were not ready yet.\n                    if (!string.Equals(finalState, "available", StringComparison.OrdinalIgnoreCase))\n                        return;\n\n                    // The network is now available. Drop the route decision from the previous\n                    // network and let Office/PDA detection choose a fresh route.\n                    Interlocked.Exchange(ref _rtdbRelayUntilUtcTicks, 0);\n                    try { NetworkChanged?.Invoke(); } catch { }\n''',
+              'available-only recovery emission')
+
+          # 2) Give Windows/DNS/PAC enough time to settle and make the newest event wait for the gate
+          # instead of silently dropping it if an older recovery is still finishing.
+          replace_once(
+              'src/PickfaceDamage1291/V142Runtime.cs',
+              '                await Task.Delay(350, ct);\n                if (!await gate.WaitAsync(0, ct)) return;\n',
+              '                await Task.Delay(1500, ct);\n                await gate.WaitAsync(ct);\n',
+              'network recovery settle/gate')
+          replace_once(
+              'src/PickfaceDamage1291/V142Runtime.cs',
+              '                    var delays = new[] { 0, 1000, 2500 };\n',
+              '                    var delays = new[] { 0, 2500, 6000 };\n',
+              'network recovery retry pacing')
+
+          # 3) Read-only sync calls are safe to retry after a just-completed network transition.
+          # This covers the transient pull_products 404 observed in the OWNER Office log without
+          # retrying any write/delete/audit action that could duplicate side effects.
+          replace_once(
+              'src/PickfaceDamage1291/GoogleGatewayV140.cs',
+              '        var root = await CallAsync("pull_changes", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);\n',
+              '        var root = await CallReadAfterNetworkChangeAsync("pull_changes", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);\n',
+              'pull_changes safe retry')
+          replace_once(
+              'src/PickfaceDamage1291/GoogleGatewayV140.cs',
+              '        var root = await CallAsync("pull_products", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);\n',
+              '        var root = await CallReadAfterNetworkChangeAsync("pull_products", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);\n',
+              'pull_products safe retry')
+
+          gateway = Path('src/PickfaceDamage1291/GoogleGatewayV140.cs')
+          s = gateway.read_text(encoding='utf-8')
+          marker = '    private static async Task<JsonElement> CallAsync(string action, object payload, CancellationToken ct)\n'
+          if s.count(marker) != 1:
+              raise SystemExit('gateway helper insertion marker missing/ambiguous')
+          helper = '''    private static async Task<JsonElement> CallReadAfterNetworkChangeAsync(string action, object payload, CancellationToken ct)\n    {\n        if (!NetworkHttpClientFactory.NetworkChangedRecently(TimeSpan.FromSeconds(45)))\n            return await CallAsync(action, payload, ct);\n\n        Exception? last = null;\n        var delays = new[] { 0, 1200, 3000 };\n        for (var attempt = 0; attempt < delays.Length; attempt++)\n        {\n            ct.ThrowIfCancellationRequested();\n            if (delays[attempt] > 0) await Task.Delay(delays[attempt], ct);\n            try\n            {\n                return await CallAsync(action, payload, ct);\n            }\n            catch (HttpRequestException ex) when (attempt + 1 < delays.Length)\n            {\n                last = ex;\n            }\n            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested && attempt + 1 < delays.Length)\n            {\n                last = ex;\n            }\n            catch (InvalidOperationException ex) when (\n                attempt + 1 < delays.Length &&\n                ex.Message.Contains("Gateway Google lỗi HTTP 404", StringComparison.OrdinalIgnoreCase))\n            {\n                last = ex;\n            }\n\n            if (last is not null)\n            {\n                AppLog.Warning("GATEWAY_READ_RETRY_AFTER_NETWORK_CHANGE", last.Message,\n                    new Dictionary<string, object?>\n                    {\n                        ["action"] = action,\n                        ["attempt"] = attempt + 1\n                    });\n            }\n        }\n\n        throw last ?? new HttpRequestException("Không đọc được dữ liệu Google sau khi đổi mạng.");\n    }\n\n'''
+          gateway.write_text(s.replace(marker, helper + marker, 1), encoding='utf-8', newline='')
+
+          # 4) Version bump.
+          project = Path('src/PickfaceDamage1291/PickfaceDamage1291.csproj')
+          s = project.read_text(encoding='utf-8')
+          for old, new in [
+              ('<Version>1.4.17</Version>', '<Version>1.4.18</Version>'),
+              ('<InformationalVersion>1.4.17</InformationalVersion>', '<InformationalVersion>1.4.18</InformationalVersion>'),
+              ('<AssemblyVersion>1.4.17.0</AssemblyVersion>', '<AssemblyVersion>1.4.18.0</AssemblyVersion>'),
+              ('<FileVersion>1.4.17.0</FileVersion>', '<FileVersion>1.4.18.0</FileVersion>')
+          ]:
+              if s.count(old) != 1:
+                  raise SystemExit(f'version marker missing: {old}')
+              s = s.replace(old, new, 1)
+          project.write_text(s, encoding='utf-8', newline='')
+          PY
+
+      - name: Validate targeted diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff -- src/PickfaceDamage1291/NetworkHttpClientFactory.cs \
+                        src/PickfaceDamage1291/V142Runtime.cs \
+                        src/PickfaceDamage1291/GoogleGatewayV140.cs \
+                        src/PickfaceDamage1291/PickfaceDamage1291.csproj
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "src/PickfaceDamage1291/GoogleGatewayV140.cs src/PickfaceDamage1291/NetworkHttpClientFactory.cs src/PickfaceDamage1291/PickfaceDamage1291.csproj src/PickfaceDamage1291/V142Runtime.cs "
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cross-target build and verify portable EXE
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj -p:EnableWindowsTargeting=true
+          dotnet publish src/PickfaceDamage1291/PickfaceDamage1291.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableWindowsTargeting=true -o .tmp-v1418
+          test -s .tmp-v1418/PickfaceDamage1291.exe
+
+      - name: Commit tested source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/PickfaceDamage1291/NetworkHttpClientFactory.cs \
+                  src/PickfaceDamage1291/V142Runtime.cs \
+                  src/PickfaceDamage1291/GoogleGatewayV140.cs \
+                  src/PickfaceDamage1291/PickfaceDamage1291.csproj
+          git commit -m 'release v1.4.18 fix Office network transition regression'
+          git push origin HEAD:main
