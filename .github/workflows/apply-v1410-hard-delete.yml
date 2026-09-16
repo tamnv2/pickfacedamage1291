@@ -59,6 +59,12 @@ jobs:
               '            V148Runtime.Apply(main);\n            V1410Runtime.Apply(main);\n            Application.Run(main);'
           )
 
+          replace_once(
+              'src/PickfaceDamage1291/V1410Runtime.cs',
+              'var key = byId.TryGetValue(outcome.ReportId, out var report) ? report.Sku : outcome.ReportId;',
+              'var key = byId.TryGetValue(outcome.ReportId, out var failedReport) ? failedReport.Sku : outcome.ReportId;'
+          )
+
           project = Path('src/PickfaceDamage1291/PickfaceDamage1291.csproj')
           text = project.read_text(encoding='utf-8')
           for old, new in [
