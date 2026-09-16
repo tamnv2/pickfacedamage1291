@@ -5,9 +5,7 @@ namespace PickfaceDamage1291;
 internal static class OfficeNetworkRouteV1413
 {
     private static readonly Uri GatewayUri = new("https://script.google.com/");
-    private static readonly object Gate = new();
     private static int _initialized;
-    private static CancellationTokenSource? _networkChangeDebounce;
 
     public static void Initialize()
     {
@@ -78,29 +76,13 @@ internal static class OfficeNetworkRouteV1413
 
     private static void OnNetworkChanged()
     {
-        lock (Gate)
+        try
         {
-            _networkChangeDebounce?.Cancel();
-            _networkChangeDebounce?.Dispose();
-            _networkChangeDebounce = new CancellationTokenSource();
-            var token = _networkChangeDebounce.Token;
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await Task.Delay(900, token);
-                    if (!token.IsCancellationRequested)
-                        ApplyCurrentNetworkPreference("windows_network_changed");
-                }
-                catch (OperationCanceledException)
-                {
-                    // A newer network change replaced this probe.
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Warning("OFFICE_ROUTE_REEVALUATE_FAILED", ex.Message);
-                }
-            }, token);
+            ApplyCurrentNetworkPreference("windows_network_changed");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning("OFFICE_ROUTE_REEVALUATE_FAILED", ex.Message);
         }
     }
 

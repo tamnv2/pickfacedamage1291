@@ -11,6 +11,8 @@ internal static partial class AppLog
     private static bool _initialized;
     private static string? _currentWritablePath;
     private static int _partIndex = 1;
+    private static int _oldLogsRemovedOnVersionChange;
+    private static string VersionMarkerPath => Path.Combine(AppPaths.Data, "log_version.txt");
 
     [GeneratedRegex("(?i)(authorization\\s*[:=]\\s*bearer\\s+)[^\\s,;]+")]
     private static partial Regex BearerRegex();
@@ -31,12 +33,14 @@ internal static partial class AppLog
             if (_initialized) return;
             AppPaths.EnsureCreated();
             Directory.CreateDirectory(AppPaths.Logs);
+            _oldLogsRemovedOnVersionChange = ResetForVersionIfNeededLocked();
             _initialized = true;
         }
         Info("APP_LOG_READY", "Hệ thống log local realtime đã sẵn sàng.", new Dictionary<string, object?>
         {
             ["process_started_at"] = ProcessStartedAt,
-            ["log_file"] = Path.GetFileName(GetCurrentWritablePathForInfo())
+            ["log_file"] = Path.GetFileName(GetCurrentWritablePathForInfo()),
+            ["old_logs_removed_after_update"] = _oldLogsRemovedOnVersionChange
         });
     }
 
@@ -80,7 +84,10 @@ internal static partial class AppLog
                         sealedPath = file + "." + Guid.NewGuid().ToString("N") + ".send";
                     File.Move(file, sealedPath);
                     if (string.Equals(_currentWritablePath, file, StringComparison.OrdinalIgnoreCase))
+                    {
                         _currentWritablePath = null;
+                        _partIndex++;
+                    }
                 }
                 catch
                 {
@@ -115,8 +122,55 @@ internal static partial class AppLog
             sent++;
         }
 
-        progress?.Report($"Đã gửi thành công {sent:N0} file log. File đã gửi đã được xoá khỏi máy.");
+        Info("LOG_UPLOAD_LOCAL_RESET", "Đã gửi log lên Drive; log cũ đã được xoá và bắt đầu chu kỳ log local mới.",
+            new Dictionary<string, object?> { ["sent_files"] = sent });
+        progress?.Report($"Đã gửi thành công {sent:N0} file log. Log cũ đã được xoá; ứng dụng đang ghi vào file log mới.");
         return sent;
+    }
+
+    private static int ResetForVersionIfNeededLocked()
+    {
+        var current = VersionUpdateService.CurrentVersionText.Trim();
+        var previous = string.Empty;
+        try
+        {
+            if (File.Exists(VersionMarkerPath))
+                previous = File.ReadAllText(VersionMarkerPath).Trim();
+        }
+        catch
+        {
+            previous = string.Empty;
+        }
+
+        if (string.Equals(previous, current, StringComparison.OrdinalIgnoreCase)) return 0;
+
+        var deleted = 0;
+        foreach (var path in Directory.EnumerateFiles(AppPaths.Logs, "*", SearchOption.TopDirectoryOnly).ToList())
+        {
+            if (!path.EndsWith(".log", StringComparison.OrdinalIgnoreCase) &&
+                !path.EndsWith(".send", StringComparison.OrdinalIgnoreCase)) continue;
+            try
+            {
+                File.Delete(path);
+                deleted++;
+            }
+            catch
+            {
+                // A locked diagnostic file is left untouched; logging must never block startup.
+            }
+        }
+
+        _currentWritablePath = null;
+        _partIndex = 1;
+        try
+        {
+            File.WriteAllText(VersionMarkerPath, current, new System.Text.UTF8Encoding(false));
+        }
+        catch
+        {
+            // Marker failure only means the next startup may retry cleanup.
+        }
+        return deleted;
     }
 
     private static void Write(

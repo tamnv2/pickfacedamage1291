@@ -11,10 +11,10 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <Version>1.4.16</Version>
-    <InformationalVersion>1.4.16</InformationalVersion>
-    <AssemblyVersion>1.4.16.0</AssemblyVersion>
-    <FileVersion>1.4.16.0</FileVersion>
+    <Version>1.4.17</Version>
+    <InformationalVersion>1.4.17</InformationalVersion>
+    <AssemblyVersion>1.4.17.0</AssemblyVersion>
+    <FileVersion>1.4.17.0</FileVersion>
     <ApplicationIcon>Assets\PickfaceDamage1291.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

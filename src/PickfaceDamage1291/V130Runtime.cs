@@ -190,17 +190,76 @@ internal static class V130Runtime
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
-            RowCount = 3,
+            RowCount = 0,
             Padding = new Padding(12)
         };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddRow(panel, "Tài khoản", new Label { Text = session?.Profile.Username ?? "-", AutoSize = true });
-        AddRow(panel, "Tùy chọn", new Label
+
+        var allowOffline = new CheckBox
         {
-            Text = $"Đăng nhập offline: {(prefs.AllowOfflineLogin ? "Bật" : "Tắt")} • Duy trì đăng nhập: {(prefs.KeepSignedIn ? "Bật" : "Tắt")}",
-            AutoSize = true
-        });
+            Text = "Cho phép đăng nhập offline",
+            Checked = prefs.AllowOfflineLogin,
+            AutoSize = true,
+            Margin = new Padding(0, 2, 18, 2)
+        };
+        var keepSignedIn = new CheckBox
+        {
+            Text = "Duy trì đăng nhập khi mở lại ứng dụng",
+            Checked = prefs.KeepSignedIn,
+            AutoSize = true,
+            Margin = new Padding(0, 2, 18, 2)
+        };
+        var options = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = true,
+            FlowDirection = FlowDirection.LeftToRight
+        };
+        options.Controls.AddRange([allowOffline, keepSignedIn]);
+        AddRow(panel, "Tùy chọn đăng nhập", options);
+
+        var preferenceStatus = new Label
+        {
+            AutoSize = true,
+            ForeColor = Color.DimGray,
+            MaximumSize = new Size(620, 0)
+        };
+        AddRow(panel, "Trạng thái", preferenceStatus);
+
+        void PersistPreferences()
+        {
+            var next = new LoginPreferences
+            {
+                AllowOfflineLogin = allowOffline.Checked,
+                KeepSignedIn = keepSignedIn.Checked
+            };
+            LoginPreferencesStore.Save(next);
+
+            if (next.AllowOfflineLogin || next.KeepSignedIn)
+            {
+                if (AppSession.Current is { } active) SecureSessionStore.Save(active);
+            }
+            else
+            {
+                SecureSessionStore.Clear();
+            }
+
+            preferenceStatus.Text = $"Đăng nhập offline: {(next.AllowOfflineLogin ? "Bật" : "Tắt")} • Duy trì đăng nhập: {(next.KeepSignedIn ? "Bật" : "Tắt")}. Thay đổi có hiệu lực ngay.";
+            AppLog.Info("LOGIN_PREFERENCES_CHANGED", "Đã cập nhật tùy chọn phiên đăng nhập trong khi ứng dụng đang chạy.",
+                new Dictionary<string, object?>
+                {
+                    ["allow_offline_login"] = next.AllowOfflineLogin,
+                    ["keep_signed_in"] = next.KeepSignedIn
+                });
+        }
+
+        allowOffline.CheckedChanged += (_, _) => PersistPreferences();
+        keepSignedIn.CheckedChanged += (_, _) => PersistPreferences();
+        preferenceStatus.Text = $"Đăng nhập offline: {(prefs.AllowOfflineLogin ? "Bật" : "Tắt")} • Duy trì đăng nhập: {(prefs.KeepSignedIn ? "Bật" : "Tắt")}. Có thể thay đổi ngay tại đây.";
+
         var logout = new Button { Text = "Đăng xuất tài khoản", AutoSize = true, Height = 36, Padding = new Padding(10, 0, 10, 0) };
         logout.Click += (_, _) =>
         {

@@ -13,6 +13,10 @@ internal static class NetworkHttpClientFactory
     private static long _lastNetworkChangeUtcTicks;
     private static long _rtdbRelayUntilUtcTicks;
     private static readonly TimeSpan RtdbRelayCooldown = TimeSpan.FromHours(8);
+    private static readonly object NetworkChangeGate = new();
+    private static readonly TimeSpan NetworkChangeDebounce = TimeSpan.FromMilliseconds(900);
+    private static CancellationTokenSource? _networkChangeDebounce;
+    private static string _pendingNetworkState = "unknown";
 
     public static event Action? NetworkChanged;
 
@@ -53,9 +57,9 @@ internal static class NetworkHttpClientFactory
 
         // Keep connections short-lived so DNS/TCP/proxy routes refresh quickly when a laptop
         // moves between Internet/Wi-Fi and an internal Office LAN.
-        PooledConnectionLifetime = TimeSpan.FromSeconds(5),
-        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(5),
-        ConnectTimeout = TimeSpan.FromSeconds(12)
+        PooledConnectionLifetime = TimeSpan.FromSeconds(15),
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
+        ConnectTimeout = TimeSpan.FromSeconds(8)
     };
 
     public static bool NetworkChangedRecently(TimeSpan window)
@@ -109,22 +113,49 @@ internal static class NetworkHttpClientFactory
     {
         Interlocked.Exchange(ref _lastNetworkChangeUtcTicks, DateTime.UtcNow.Ticks);
 
-        // A network change may mean the laptop has left the restricted Office network.
-        // Probe direct Firebase again instead of pinning the relay decision from the old network.
+        // Route state is invalid immediately, but expensive recovery work is emitted only once
+        // after Windows finishes its burst of address/availability notifications.
         Interlocked.Exchange(ref _rtdbRelayUntilUtcTicks, 0);
-        try
+        lock (NetworkChangeGate)
         {
-            AppLog.Info("NETWORK_CHANGED", "Windows báo thay đổi kết nối mạng.", new Dictionary<string, object?>
+            _pendingNetworkState = state;
+            var previous = _networkChangeDebounce;
+            try { previous?.Cancel(); } catch { }
+            previous?.Dispose();
+
+            var current = new CancellationTokenSource();
+            _networkChangeDebounce = current;
+            _ = Task.Run(async () =>
             {
-                ["state"] = state
+                try
+                {
+                    await Task.Delay(NetworkChangeDebounce, current.Token);
+                    string finalState;
+                    lock (NetworkChangeGate)
+                    {
+                        finalState = _pendingNetworkState;
+                        if (ReferenceEquals(_networkChangeDebounce, current)) _networkChangeDebounce = null;
+                    }
+
+                    try
+                    {
+                        AppLog.Info("NETWORK_CHANGED", "Windows đã ổn định sau cụm thay đổi kết nối mạng.",
+                            new Dictionary<string, object?> { ["state"] = finalState });
+                    }
+                    catch { }
+
+                    try { NetworkChanged?.Invoke(); } catch { }
+                }
+                catch (OperationCanceledException)
+                {
+                    // A newer Windows network event replaced this one.
+                }
+                finally
+                {
+                    current.Dispose();
+                }
             });
         }
-        catch
-        {
-            // Network notifications can arrive before logging is initialized.
-        }
-
-        try { NetworkChanged?.Invoke(); } catch { }
     }
 
     internal static void PreferRtdbRelayForCurrentNetwork(string reason)

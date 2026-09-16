@@ -365,7 +365,7 @@ internal static class V142Runtime
         {
             try
             {
-                await Task.Delay(1500, ct);
+                await Task.Delay(350, ct);
                 if (!await gate.WaitAsync(0, ct)) return;
                 try
                 {
@@ -373,7 +373,7 @@ internal static class V142Runtime
                     if (session is null || session.OfflineMode || !RuntimeConfigService.IsGoogleGatewayConfigured) return;
 
                     Exception? last = null;
-                    var delays = new[] { 0, 2500, 6000 };
+                    var delays = new[] { 0, 1000, 2500 };
                     for (var attempt = 0; attempt < delays.Length; attempt++)
                     {
                         ct.ThrowIfCancellationRequested();
@@ -386,9 +386,15 @@ internal static class V142Runtime
                             await GoogleService.VerifyBindingAsync(writeHeaders: false);
 
                             var progress = new Progress<string>(message => TaskProgressCenter.Report(form, "network-recovery", message));
-                            if (session.Profile.IsAdmin || session.Profile.HasPermission("sync_google") || session.Profile.HasPermission("damage_entry"))
+                            var canWrite = session.Profile.IsAdmin || session.Profile.HasPermission("sync_google") || session.Profile.HasPermission("damage_entry");
+                            var canRead = canWrite || session.Profile.HasPermission("view_reports");
+                            var hasPendingWrites = canWrite && (Database.GetPendingReports().Any() || (session.Profile.IsAdmin && SyncCacheStore.ProductsDirty));
+
+                            // Most Windows network notifications do not mean business data changed.
+                            // Avoid the heavier two-pass SyncNow path unless this laptop actually has local writes waiting.
+                            if (hasPendingWrites)
                                 await CloudSyncService.SyncNowAsync(progress, ct);
-                            else if (session.Profile.HasPermission("view_reports"))
+                            else if (canRead)
                                 await CloudSyncService.PullSharedDataAsync(progress, ct);
 
                             BackgroundSyncCoordinator.EnqueuePending();
@@ -399,9 +405,10 @@ internal static class V142Runtime
                         catch (Exception ex) when (!ct.IsCancellationRequested)
                         {
                             last = ex;
-                            AppLog.Exception("NETWORK_RECOVERY_RETRY", ex, new Dictionary<string, object?>
+                            AppLog.Warning("NETWORK_RECOVERY_RETRY", ex.Message, new Dictionary<string, object?>
                             {
-                                ["attempt"] = attempt + 1
+                                ["attempt"] = attempt + 1,
+                                ["error_type"] = ex.GetType().Name
                             });
                         }
                     }
