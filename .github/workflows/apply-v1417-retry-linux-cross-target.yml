@@ -1,0 +1,90 @@
+name: Retry v1.4.17 Patch With Windows Cross Targeting
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v1417-retry-linux-cross-target.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.repository == 'tamnv2/pickfacedamage1291'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify fixed project scope and source baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'tamnv2/pickfacedamage1291' PROJECT_SCOPE_LOCK.md
+          grep -Fq '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC' PROJECT_SCOPE_LOCK.md
+          grep -Fq 'pickface-damage-1291' PROJECT_SCOPE_LOCK.md
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/AppLog.cs)" = 'ead50ad76019284b3f9d1de552017adffd990ea4'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/V130Runtime.cs)" = '3e564b2c1a23773be8e20ca44ccd01512024a5df'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/V142Runtime.cs)" = '0c06b186016f7819922b558ecc71eb36aaa475df'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/NetworkHttpClientFactory.cs)" = '3f15d197f3f61f3c54a0d06ef7e626c29e5f3968'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/OfficeNetworkRouteV1413.cs)" = '2f8c3abf9e74bf7028aafda24d0f353fc4523acc'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/PickfaceDamage1291.csproj)" = 'b83a5b352efffa4cdaf524386649905c049f5b02'
+
+      - name: Reuse reviewed v1.4.17 source patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/apply-v1417-log-session-network-optimization.yml').read_text(encoding='utf-8')
+          start = "          python3 - <<'PY'\n"
+          end = "\n          PY\n"
+          if start not in workflow:
+              raise SystemExit('Reviewed patch block start not found')
+          body = workflow.split(start, 1)[1]
+          if end not in body:
+              raise SystemExit('Reviewed patch block end not found')
+          body = body.split(end, 1)[0]
+          exec(compile(textwrap.dedent(body), 'v1417-reviewed-patch', 'exec'), {})
+          PY
+
+      - name: Validate diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --stat
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cross-target build and verify portable EXE
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj -p:EnableWindowsTargeting=true
+          dotnet publish src/PickfaceDamage1291/PickfaceDamage1291.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableWindowsTargeting=true -o .tmp-v1417
+          test -s .tmp-v1417/PickfaceDamage1291.exe
+
+      - name: Commit tested source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/PickfaceDamage1291/AppLog.cs \
+                  src/PickfaceDamage1291/V130Runtime.cs \
+                  src/PickfaceDamage1291/V142Runtime.cs \
+                  src/PickfaceDamage1291/NetworkHttpClientFactory.cs \
+                  src/PickfaceDamage1291/OfficeNetworkRouteV1413.cs \
+                  src/PickfaceDamage1291/PickfaceDamage1291.csproj
+          git commit -m 'release v1.4.17 log session and network optimization'
+          git push origin HEAD:main
