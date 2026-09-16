@@ -365,15 +365,15 @@ internal static class V142Runtime
         {
             try
             {
-                await Task.Delay(350, ct);
-                if (!await gate.WaitAsync(0, ct)) return;
+                await Task.Delay(1500, ct);
+                await gate.WaitAsync(ct);
                 try
                 {
                     var session = AppSession.Current;
                     if (session is null || session.OfflineMode || !RuntimeConfigService.IsGoogleGatewayConfigured) return;
 
                     Exception? last = null;
-                    var delays = new[] { 0, 1000, 2500 };
+                    var delays = new[] { 0, 2500, 6000 };
                     for (var attempt = 0; attempt < delays.Length; attempt++)
                     {
                         ct.ThrowIfCancellationRequested();

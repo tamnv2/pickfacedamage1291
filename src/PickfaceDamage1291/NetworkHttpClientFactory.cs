@@ -57,9 +57,9 @@ internal static class NetworkHttpClientFactory
 
         // Keep connections short-lived so DNS/TCP/proxy routes refresh quickly when a laptop
         // moves between Internet/Wi-Fi and an internal Office LAN.
-        PooledConnectionLifetime = TimeSpan.FromSeconds(15),
-        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
-        ConnectTimeout = TimeSpan.FromSeconds(8)
+        PooledConnectionLifetime = TimeSpan.FromSeconds(5),
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(5),
+        ConnectTimeout = TimeSpan.FromSeconds(12)
     };
 
     public static bool NetworkChangedRecently(TimeSpan window)
@@ -113,9 +113,8 @@ internal static class NetworkHttpClientFactory
     {
         Interlocked.Exchange(ref _lastNetworkChangeUtcTicks, DateTime.UtcNow.Ticks);
 
-        // Route state is invalid immediately, but expensive recovery work is emitted only once
-        // after Windows finishes its burst of address/availability notifications.
-        Interlocked.Exchange(ref _rtdbRelayUntilUtcTicks, 0);
+        // Windows emits address/unavailable/available bursts while adapters, DNS and PAC/proxy
+        // are still changing. Keep the last known-safe route until a stable available state wins.
         lock (NetworkChangeGate)
         {
             _pendingNetworkState = state;
@@ -144,6 +143,15 @@ internal static class NetworkHttpClientFactory
                     }
                     catch { }
 
+                    // Never start recovery while Windows still reports unavailable. This was the
+                    // v1.4.17 regression: the unavailable recovery occupied the gate and the real
+                    // available event could be dropped while DNS/proxy were not ready yet.
+                    if (!string.Equals(finalState, "available", StringComparison.OrdinalIgnoreCase))
+                        return;
+
+                    // The network is now available. Drop the route decision from the previous
+                    // network and let Office/PDA detection choose a fresh route.
+                    Interlocked.Exchange(ref _rtdbRelayUntilUtcTicks, 0);
                     try { NetworkChanged?.Invoke(); } catch { }
                 }
                 catch (OperationCanceledException)

@@ -73,7 +73,7 @@ internal static class GoogleGatewayV140
 
     public static async Task<ReportChangePage> PullReportChangesAsync(long afterSeq, int limit = 500, CancellationToken ct = default)
     {
-        var root = await CallAsync("pull_changes", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);
+        var root = await CallReadAfterNetworkChangeAsync("pull_changes", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);
         var changes = new List<RemoteReportChange>();
         if (root.TryGetProperty("changes", out var node) && node.ValueKind == JsonValueKind.Array)
         {
@@ -128,7 +128,7 @@ internal static class GoogleGatewayV140
 
     public static async Task<ProductChangePage> PullProductChangesAsync(long afterSeq, int limit = 500, CancellationToken ct = default)
     {
-        var root = await CallAsync("pull_products", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);
+        var root = await CallReadAfterNetworkChangeAsync("pull_products", new { after_seq = Math.Max(0, afterSeq), limit = Math.Clamp(limit, 1, 1000) }, ct);
         var changes = new List<RemoteProductChange>();
         if (root.TryGetProperty("changes", out var node) && node.ValueKind == JsonValueKind.Array)
         {
@@ -248,6 +248,50 @@ internal static class GoogleGatewayV140
         }, ct);
         if (string.IsNullOrWhiteSpace(Str(root, "file_id")))
             throw new InvalidOperationException("Drive chưa xác nhận file log đã được lưu.");
+    }
+
+    private static async Task<JsonElement> CallReadAfterNetworkChangeAsync(string action, object payload, CancellationToken ct)
+    {
+        if (!NetworkHttpClientFactory.NetworkChangedRecently(TimeSpan.FromSeconds(45)))
+            return await CallAsync(action, payload, ct);
+
+        Exception? last = null;
+        var delays = new[] { 0, 1200, 3000 };
+        for (var attempt = 0; attempt < delays.Length; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (delays[attempt] > 0) await Task.Delay(delays[attempt], ct);
+            try
+            {
+                return await CallAsync(action, payload, ct);
+            }
+            catch (HttpRequestException ex) when (attempt + 1 < delays.Length)
+            {
+                last = ex;
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested && attempt + 1 < delays.Length)
+            {
+                last = ex;
+            }
+            catch (InvalidOperationException ex) when (
+                attempt + 1 < delays.Length &&
+                ex.Message.Contains("Gateway Google lỗi HTTP 404", StringComparison.OrdinalIgnoreCase))
+            {
+                last = ex;
+            }
+
+            if (last is not null)
+            {
+                AppLog.Warning("GATEWAY_READ_RETRY_AFTER_NETWORK_CHANGE", last.Message,
+                    new Dictionary<string, object?>
+                    {
+                        ["action"] = action,
+                        ["attempt"] = attempt + 1
+                    });
+            }
+        }
+
+        throw last ?? new HttpRequestException("Không đọc được dữ liệu Google sau khi đổi mạng.");
     }
 
     private static async Task<JsonElement> CallAsync(string action, object payload, CancellationToken ct)
