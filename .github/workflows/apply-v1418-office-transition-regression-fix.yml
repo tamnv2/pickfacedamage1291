@@ -31,7 +31,7 @@ jobs:
           test "$(git rev-parse HEAD:src/PickfaceDamage1291/NetworkHttpClientFactory.cs)" = 'f37463a171f19ae4a213184d290e96b9913136f8'
           test "$(git rev-parse HEAD:src/PickfaceDamage1291/V142Runtime.cs)" = 'fd41ce9a49a3d7deac05eb2698783476fa5a633c'
           test "$(git rev-parse HEAD:src/PickfaceDamage1291/GoogleGatewayV140.cs)" = '4206a0018d17876d30009d3540d840f6de9c27e8'
-          test "$(git rev-parse HEAD:src/PickfaceDamage1291/PickfaceDamage1291.csproj)" = '88340a4874d7660491cfc9da5f40a9ee97fcc787'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/PickfaceDamage1291.csproj)" = '70492228ecc744fc726b5bc650ed2b1e3591890e'
 
       - name: Apply targeted v1.4.18 regression fix
         shell: bash
