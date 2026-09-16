@@ -2,22 +2,23 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "users": {
       ".read": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && root.child('users').child(auth.uid).child('role').val() == 'admin'",
       "$uid": {
         ".read": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && (auth.uid == $uid || root.child('users').child(auth.uid).child('role').val() == 'admin')",
         ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && (root.child('users').child(auth.uid).child('role').val() == 'admin' || (auth.uid == $uid && data.exists() && newData.child('uid').val() == data.child('uid').val() && newData.child('username').val() == data.child('username').val() && newData.child('role').val() == data.child('role').val() && newData.child('active').val() == data.child('active').val() && newData.child('permissions').val() == data.child('permissions').val()))",
-        ".validate": "newData.hasChildren(['uid','username','display_name','email','role','active','permissions']) && newData.child('uid').val() == $uid && newData.child('username').isString() && newData.child('display_name').isString() && newData.child('email').isString() && (newData.child('role').val() == 'admin' || newData.child('role').val() == 'user') && newData.child('active').isBoolean()"
+        ".validate": "newData.hasChildren(['uid','username','display_name','email','role','active','permissions']) && newData.child('uid').val() == $uid && newData.child('username').isString() && newData.child('display_name').isString() && newData.child('email').isString() && (newData.child('role').val() == 'admin' || newData.child('role').val() == 'user') && newData.child('active').isBoolean()",
+        "display_name": {
+          ".write": "auth != null && auth.uid == $uid && root.child('users').child(auth.uid).child('active').val() == true",
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 120"
+        }
       }
     },
-
     "active_operator": {
       ".read": "auth != null && root.child('users').child(auth.uid).child('active').val() == true",
       ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && root.child('users').child(auth.uid).child('role').val() == 'user' && ((newData.val() == null && data.child('uid').val() == auth.uid) || (newData.val() != null && newData.child('uid').val() == auth.uid && (!data.exists() || data.child('uid').val() == auth.uid || data.child('last_seen').val() >= now - 120000 || data.child('lease_until').val() <= now)))",
       ".validate": "newData.val() == null || (newData.hasChildren(['uid','username','session_id','device_id','generation','acquired_at','lease_until','last_seen']) && newData.child('uid').val() == auth.uid && newData.child('username').val() == root.child('users').child(auth.uid).child('username').val() && newData.child('session_id').isString() && newData.child('device_id').isString() && newData.child('generation').isNumber() && newData.child('generation').val() >= 1 && (!data.exists() || newData.child('generation').val() > data.child('generation').val()) && newData.child('acquired_at').isNumber() && newData.child('lease_until').isNumber() && newData.child('lease_until').val() >= now && newData.child('lease_until').val() <= now + 1810000 && newData.child('last_seen').isNumber() && newData.child('last_seen').val() >= now - 120000 && newData.child('last_seen').val() <= now + 30000)"
     },
-
     "presence": {
       "$uid": {
         "$session": {
@@ -27,10 +28,11 @@
         }
       }
     },
-
     "audit": {
       ".read": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && root.child('users').child(auth.uid).child('role').val() == 'admin'",
-      ".indexOn": ["server_time"],
+      ".indexOn": [
+        "server_time"
+      ],
       "$eventId": {
         ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() == true && ((!data.exists() && newData.exists() && newData.child('uid').val() == auth.uid) || (data.exists() && newData.val() == null && root.child('users').child(auth.uid).child('role').val() == 'admin' && data.child('action').val() != 'AUDIT_LOGS_DELETED'))",
         ".validate": "newData.val() == null || (newData.hasChildren(['event_id','uid','username','device_id','session_id','action','client_time','server_time']) && newData.child('event_id').val() == $eventId && newData.child('uid').val() == auth.uid && newData.child('username').val() == root.child('users').child(auth.uid).child('username').val())"

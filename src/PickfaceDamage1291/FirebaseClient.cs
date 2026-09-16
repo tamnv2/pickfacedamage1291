@@ -118,6 +118,37 @@ internal static class FirebaseClient
         return JsonSerializer.Deserialize<FirebaseUserProfile>(body, JsonOptions);
     }
 
+    public static async Task<FirebaseUserProfile> UpdateOwnDisplayNameAsync(
+        FirebaseSession session,
+        string displayName,
+        CancellationToken ct = default)
+    {
+        if (session.OfflineMode)
+            throw new InvalidOperationException("Cần kết nối mạng để cập nhật họ tên.");
+
+        var value = (displayName ?? string.Empty).Trim();
+        if (value.Length == 0)
+            throw new InvalidOperationException("Họ tên không được để trống.");
+        if (value.Length > 120)
+            throw new InvalidOperationException("Họ tên tối đa 120 ký tự.");
+
+        await EnsureFreshAsync(session, ct);
+        using var response = await Http.PutAsync(
+            DbUrl($"users/{Uri.EscapeDataString(session.Uid)}/display_name", session.IdToken),
+            JsonContent(value),
+            ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(ToFriendlyDatabaseError(response.StatusCode, body));
+
+        var refreshed = await GetProfileAsync(session.Uid, session.IdToken, ct)
+                        ?? throw new InvalidOperationException("Không đọc lại được hồ sơ sau khi cập nhật họ tên.");
+        session.Profile = refreshed;
+        SecureSessionStore.Save(session);
+        await AppendAuditAsync(session, "DISPLAY_NAME_UPDATED", new { display_name = refreshed.DisplayName }, ct: ct);
+        return refreshed;
+    }
+
     public static async Task<long> GetServerNowMsAsync(FirebaseSession session, CancellationToken ct = default)
     {
         await EnsureFreshAsync(session, ct);
