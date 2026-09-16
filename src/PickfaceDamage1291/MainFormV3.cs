@@ -1083,9 +1083,9 @@ internal sealed class MainForm : Form
             _updateButton.Enabled = false;
             if (_availableRelease is null || !VersionUpdateService.IsNewer(_availableRelease))
             {
-                _versionStatus.Text = "Đang kiểm tra GitHub Release...";
+                _versionStatus.Text = "Đang kiểm tra bản cập nhật (GitHub, có Google dự phòng)...";
                 _availableRelease = await VersionUpdateService.GetLatestAsync();
-                if (_availableRelease is null) { _versionStatus.Text = "Chưa có GitHub Release hợp lệ để cập nhật tự động."; return; }
+                if (_availableRelease is null) { _versionStatus.Text = "Chưa có bản phát hành hợp lệ để cập nhật tự động."; return; }
                 RefreshSettings();
                 if (!VersionUpdateService.IsNewer(_availableRelease)) { MessageBox.Show(this, "Ứng dụng đang ở phiên bản mới nhất.", "Cập nhật phiên bản"); return; }
                 var notes = string.IsNullOrWhiteSpace(_availableRelease.Notes) ? "Không có ghi chú phát hành." : _availableRelease.Notes;
@@ -1101,7 +1101,7 @@ internal sealed class MainForm : Form
         catch (Exception ex)
         {
             _versionStatus.Text = "Cập nhật tự động chưa hoàn tất.";
-            MessageBox.Show(this, ex.Message + "\n\nCó thể dùng nút Mở GitHub Releases để tải thủ công.", "Không thể tự cập nhật", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, ex.Message + "\n\nỨng dụng đã thử cả GitHub và Google Drive dự phòng. Hãy kiểm tra mạng rồi thử lại.", "Không thể tự cập nhật", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally { _updateButton.Enabled = true; }
     }
