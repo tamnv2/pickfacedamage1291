@@ -229,8 +229,12 @@ internal sealed class OperatorLeaseManager : IAsyncDisposable
         {
             // Normal shutdown.
         }
-        catch
+        catch (Exception ex)
         {
+            AppLog.Exception("OPERATOR_HEARTBEAT_ONLINE_FAILED", ex, new Dictionary<string, object?>
+            {
+                ["firebase_rtdb_route"] = NetworkHttpClientFactory.IsRtdbRelayPreferred ? "google_relay" : "direct_firebase"
+            });
             _session.OfflineMode = true;
             SecureSessionStore.Save(_session);
             StateChanged?.Invoke("Mất kết nối — chuyển sang thời gian dự phòng offline tối đa 30 phút.", IsOfflineLeaseStillValid());

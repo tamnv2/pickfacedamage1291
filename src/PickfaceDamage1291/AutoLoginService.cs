@@ -20,8 +20,13 @@ internal static class AutoLoginService
             cached.Email = profile.Email;
             return await SessionBootstrap.PrepareOnlineAsync(cached, null, ct);
         }
-        catch
+        catch (Exception ex)
         {
+            AppLog.Exception("AUTO_LOGIN_ONLINE_FAILED", ex, new Dictionary<string, object?>
+            {
+                ["firebase_rtdb_route"] = NetworkHttpClientFactory.IsRtdbRelayPreferred ? "google_relay" : "direct_firebase",
+                ["github_runtime_config_reachable"] = RuntimeConfigService.GitHubRuntimeConfigReachable
+            });
             if (!preferences.AllowOfflineLogin) return false;
             try { return SessionBootstrap.PrepareOffline(cached); }
             catch { return false; }

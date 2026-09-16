@@ -67,28 +67,7 @@ internal static class FirebaseClient
         try
         {
             if (!string.IsNullOrWhiteSpace(session.IdToken) && session.AccessTokenExpiresUtc > DateTime.UtcNow.AddMinutes(2)) return;
-
-            using var form = new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["grant_type"] = "refresh_token",
-                ["refresh_token"] = session.RefreshToken
-            });
-            using var response = await Http.PostAsync(
-                $"https://securetoken.googleapis.com/v1/token?key={Uri.EscapeDataString(ApiKey)}", form, ct);
-            var body = await response.Content.ReadAsStringAsync(ct);
-            if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException(ToFriendlyAuthError(body, "Không làm mới được phiên đăng nhập."));
-
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            session.IdToken = root.GetProperty("id_token").GetString() ?? string.Empty;
-            session.RefreshToken = root.TryGetProperty("refresh_token", out var rt)
-                ? rt.GetString() ?? session.RefreshToken
-                : session.RefreshToken;
-            session.Uid = root.TryGetProperty("user_id", out var uid) ? uid.GetString() ?? session.Uid : session.Uid;
-            var expires = ParseLong(root, "expires_in", 3600);
-            session.AccessTokenExpiresUtc = DateTime.UtcNow.AddSeconds(Math.Max(60, expires - 30));
-            SecureSessionStore.Save(session);
+            await OfficeAuthGatewayV1412.RefreshSessionAsync(session, ct);
         }
         finally
         {
@@ -98,6 +77,13 @@ internal static class FirebaseClient
 
     public static async Task SendPasswordResetAsync(string email, CancellationToken ct = default)
     {
+        var username = AppSession.Current?.Profile.Username;
+        if (!string.IsNullOrWhiteSpace(username))
+        {
+            await UsernameAuthService.SendPasswordResetAsync(username, ct);
+            return;
+        }
+
         EnsureConfigured();
         var payload = new { requestType = "PASSWORD_RESET", email = email.Trim() };
         using var response = await Http.PostAsync(
@@ -296,65 +282,16 @@ internal static class FirebaseClient
         CancellationToken ct = default)
     {
         await EnsureFreshAsync(adminSession, ct);
-        var existing = await ListUsersAsync(adminSession, ct);
-        if (existing.Any(x => string.Equals(x.Username, username.Trim(), StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException("Tên tài khoản đã tồn tại.");
-        if (existing.Any(x => string.Equals(x.Email, email.Trim(), StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException("Email đã được dùng cho một tài khoản trong ứng dụng.");
-
-        var temporaryPassword = GenerateTemporaryPassword();
-        var signupPayload = new { email = email.Trim(), password = temporaryPassword, returnSecureToken = true };
-        using var signupResponse = await Http.PostAsync(
-            $"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={Uri.EscapeDataString(ApiKey)}",
-            JsonContent(signupPayload), ct);
-        var signupBody = await signupResponse.Content.ReadAsStringAsync(ct);
-        if (!signupResponse.IsSuccessStatusCode)
-            throw new InvalidOperationException(ToFriendlyAuthError(signupBody, "Không tạo được tài khoản Authentication."));
-
-        using var signupDoc = JsonDocument.Parse(signupBody);
-        var signupRoot = signupDoc.RootElement;
-        var uid = signupRoot.GetProperty("localId").GetString() ?? throw new InvalidOperationException("Firebase không trả UID.");
-        var newUserToken = signupRoot.GetProperty("idToken").GetString() ?? string.Empty;
-        var profile = new FirebaseUserProfile
+        var profile = await OfficeAuthGatewayV1412.CreateUserAsync(
+            adminSession, email, username, displayName, permissions, ct);
+        await AppendAuditAsync(adminSession, "USER_CREATED", new
         {
-            Uid = uid,
-            Username = username.Trim(),
-            DisplayName = displayName.Trim(),
-            Email = email.Trim(),
-            Role = "user",
-            Active = true,
-            Permissions = permissions
-        };
-
-        try
-        {
-            using var profileResponse = await Http.PutAsync(
-                DbUrl($"users/{Uri.EscapeDataString(uid)}", adminSession.IdToken), JsonContent(profile), ct);
-            var profileBody = await profileResponse.Content.ReadAsStringAsync(ct);
-            if (!profileResponse.IsSuccessStatusCode)
-                throw new InvalidOperationException(ToFriendlyDatabaseError(profileResponse.StatusCode, profileBody));
-
-            await SendPasswordResetAsync(email, ct);
-            await AppendAuditAsync(adminSession, "USER_CREATED", new { target_uid = uid, username = profile.Username, email = profile.Email }, ct: ct);
-            return profile;
-        }
-        catch
-        {
-            if (!string.IsNullOrWhiteSpace(newUserToken))
-            {
-                try
-                {
-                    using var deleteResponse = await Http.PostAsync(
-                        $"https://identitytoolkit.googleapis.com/v1/accounts:delete?key={Uri.EscapeDataString(ApiKey)}",
-                        JsonContent(new { idToken = newUserToken }), ct);
-                }
-                catch
-                {
-                    // Best-effort rollback. The orphan Auth account has no RTDB profile and therefore no app access.
-                }
-            }
-            throw;
-        }
+            target_uid = profile.Uid,
+            username = profile.Username,
+            email = profile.Email,
+            transport = "google_gateway"
+        }, ct: ct);
+        return profile;
     }
 
     public static async Task UpdateUserProfileAsync(

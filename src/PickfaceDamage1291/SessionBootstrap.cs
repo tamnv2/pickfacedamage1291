@@ -11,6 +11,13 @@ internal static class SessionBootstrap
         session.Profile = profile;
         session.Email = profile.Email;
 
+        AppLog.Info("CONNECTIVITY_ONLINE_READY", "Đã xác thực online và chọn đường kết nối cho mạng hiện tại.", new Dictionary<string, object?>
+        {
+            ["firebase_rtdb_route"] = NetworkHttpClientFactory.IsRtdbRelayPreferred ? "google_relay" : "direct_firebase",
+            ["github_runtime_config_reachable"] = RuntimeConfigService.GitHubRuntimeConfigReachable,
+            ["google_gateway"] = RuntimeConfigService.IsGoogleGatewayConfigured
+        });
+
         OperatorLeaseManager? manager = null;
         if (!profile.IsAdmin && profile.HasPermission("damage_entry"))
         {

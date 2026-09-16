@@ -12,7 +12,7 @@ internal static class NetworkHttpClientFactory
 {
     private static long _lastNetworkChangeUtcTicks;
     private static long _rtdbRelayUntilUtcTicks;
-    private static readonly TimeSpan RtdbRelayCooldown = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan RtdbRelayCooldown = TimeSpan.FromHours(8);
 
     public static event Action? NetworkChanged;
 
@@ -127,7 +127,7 @@ internal static class NetworkHttpClientFactory
         try { NetworkChanged?.Invoke(); } catch { }
     }
 
-    private static void PreferRtdbRelay(string reason)
+    internal static void PreferRtdbRelayForCurrentNetwork(string reason)
     {
         Interlocked.Exchange(ref _rtdbRelayUntilUtcTicks, DateTime.UtcNow.Add(RtdbRelayCooldown).Ticks);
         try
@@ -240,7 +240,7 @@ internal static class NetworkHttpClientFactory
                                                relay.IsSuccessStatusCode ||
                                                relay.StatusCode == HttpStatusCode.PreconditionFailed;
                 if (relayProvesAlternatePath)
-                    PreferRtdbRelay(directException is null ? $"direct_http_{(int?)directStatus}" : "direct_network_error");
+                    PreferRtdbRelayForCurrentNetwork(directException is null ? $"direct_http_{(int?)directStatus}" : "direct_network_error");
 
                 directResponse?.Dispose();
                 if (isEventStream)
