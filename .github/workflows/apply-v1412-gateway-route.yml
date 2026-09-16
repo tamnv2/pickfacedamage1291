@@ -1,0 +1,82 @@
+name: Apply v1.4.12 Gateway Route
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v1412-gateway-route.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.repository == 'tamnv2/pickfacedamage1291'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify fixed project scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'tamnv2/pickfacedamage1291' PROJECT_SCOPE_LOCK.md
+          grep -Fq '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC' PROJECT_SCOPE_LOCK.md
+          grep -Fq 'pickface-damage-1291' PROJECT_SCOPE_LOCK.md
+          grep -Fq "PROJECT_ID: 'pickface-damage-1291'" apps-script/GoogleGateway/Code.gs
+          test -f apps-script/GoogleGateway/OfficeNetworkV1412.gs
+
+      - name: Route v1.4.12 auth actions
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('apps-script/GoogleGateway/HardDeleteV1410.gs')
+          text = path.read_text(encoding='utf-8')
+
+          old_version = "const GATEWAY_VERSION_V1410 = '1.4.10';"
+          if old_version not in text:
+              raise SystemExit('Expected v1.4.10 gateway marker not found')
+          text = text.replace(old_version, "const GATEWAY_VERSION_V1410 = '1.4.12';", 1)
+
+          old_caps = "  'upload_log','sync_report','hard_delete_reports','get_image','rtdb_proxy'\n]);"
+          new_caps = "  'upload_log','sync_report','hard_delete_reports','get_image','rtdb_proxy',\n  'firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412'\n]);"
+          if old_caps not in text:
+              raise SystemExit('Gateway capability marker not found')
+          text = text.replace(old_caps, new_caps, 1)
+
+          gateway_info = """    if (action === 'gateway_info') {\n      return json_({ ok:true, version:GATEWAY_VERSION_V1410, capabilities:GATEWAY_CAPABILITIES_V1410 });\n    }\n"""
+          if gateway_info not in text:
+              raise SystemExit('gateway_info marker not found')
+          routes = gateway_info + """\n    if (action === 'firebase_refresh_session') {\n      return json_({ ok:true, ...firebaseRefreshSessionV1412_(String(request.session_refresh || '')) });\n    }\n\n    if (action === 'firebase_admin_create_user') {\n      const idToken = String(request.id_token || '');\n      const auth = authenticateFirebase_(idToken);\n      requireAdmin_(auth.profile);\n      return json_({ ok:true, ...firebaseAdminCreateUserV1412_(auth, idToken, payload) });\n    }\n"""
+          text = text.replace(gateway_info, routes, 1)
+          path.write_text(text, encoding='utf-8')
+
+      - name: Syntax and marker verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "GATEWAY_VERSION_V1410 = '1.4.12'" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "action === 'firebase_refresh_session'" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "action === 'firebase_admin_create_user'" apps-script/GoogleGateway/HardDeleteV1410.gs
+          cp apps-script/GoogleGateway/HardDeleteV1410.gs /tmp/HardDeleteV1410.js
+          cp apps-script/GoogleGateway/OfficeNetworkV1412.gs /tmp/OfficeNetworkV1412.js
+          node --check /tmp/HardDeleteV1410.js
+          node --check /tmp/OfficeNetworkV1412.js
+
+      - name: Commit source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'tamnv2'
+          git config user.email 'nguyenvantam050595@gmail.com'
+          git add apps-script/GoogleGateway/HardDeleteV1410.gs
+          if git diff --cached --quiet; then
+            echo 'Gateway route already patched.'
+            exit 0
+          fi
+          git commit -m 'route v1.4.12 Office auth through Google gateway'
+          git push origin HEAD:main
