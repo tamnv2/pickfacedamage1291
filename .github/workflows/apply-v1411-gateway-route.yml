@@ -1,0 +1,77 @@
+name: Apply v1.4.11 Gateway Route
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v1411-gateway-route.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.repository == 'tamnv2/pickfacedamage1291'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify fixed scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "PROJECT_ID: 'pickface-damage-1291'" apps-script/GoogleGateway/Code.gs
+          grep -Fq "ROOT_FOLDER_ID: '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC'" apps-script/GoogleGateway/Code.gs
+          grep -Fq "REPOSITORY: 'tamnv2/pickfacedamage1291'" apps-script/GoogleGateway/ReleaseMirrorV1411.gs
+          grep -Fq "ROOT_FOLDER_ID: '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC'" apps-script/GoogleGateway/ReleaseMirrorV1411.gs
+
+      - name: Patch v1.4.10 gateway wrapper
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('apps-script/GoogleGateway/HardDeleteV1410.gs')
+          text = path.read_text(encoding='utf-8')
+          if "action === 'release_mirror_manifest'" not in text:
+              needle = "    return doPostLegacy_(e);"
+              if needle not in text:
+                  raise SystemExit('Không tìm thấy điểm nối doPostLegacy_ để patch fail-closed.')
+              block = """    if (action === 'release_mirror_manifest') {
+                return json_({ ok:true, ...releaseMirrorManifestV1411_(payload) });
+              }
+
+              if (action === 'release_mirror_chunk') {
+                return json_({ ok:true, ...releaseMirrorChunkV1411_(payload) });
+              }
+
+              if (action === 'warm_release_mirror') {
+                return json_({ ok:true, ...warmLatestReleaseMirrorV1411_() });
+              }
+
+              return doPostLegacy_(e);"""
+              text = text.replace(needle, block, 1)
+              path.write_text(text, encoding='utf-8')
+
+      - name: Verify patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "action === 'release_mirror_manifest'" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "action === 'release_mirror_chunk'" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "action === 'warm_release_mirror'" apps-script/GoogleGateway/HardDeleteV1410.gs
+
+      - name: Commit source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- apps-script/GoogleGateway/HardDeleteV1410.gs; then
+            echo "Gateway route đã có; không cần commit."
+            exit 0
+          fi
+          git config user.name "tamnv2"
+          git config user.email "nguyenvantam050595@gmail.com"
+          git add apps-script/GoogleGateway/HardDeleteV1410.gs
+          git commit -m "route v1.4.11 release mirror actions"
+          git push origin HEAD:main
