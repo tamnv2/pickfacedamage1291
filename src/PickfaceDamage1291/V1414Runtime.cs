@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Security.Cryptography;
 
 namespace PickfaceDamage1291;
 
@@ -76,11 +75,6 @@ internal static class V1414Runtime
                 if (!decimal.TryParse(digits, out var value)) value = 0;
                 value = Math.Clamp(value, 0, quantity.Maximum);
                 if (quantity.Value != value) quantity.Value = value;
-                if (value > 0 && value.ToString("0").Length > 9)
-                {
-                    input.Text = quantity.Maximum.ToString("0");
-                    input.SelectionStart = input.TextLength;
-                }
             }
             finally
             {
@@ -142,7 +136,7 @@ internal static class V1414Runtime
                 Margin = new Padding(4, 4, 8, 4),
                 Tag = "v1414-paste-image"
             };
-            AppUiStyle.StyleButton(paste, ButtonVisual.Secondary);
+            AppUiStyle.StyleButton(paste, ButtonVisual.Normal);
             paste.Click += (_, _) => PasteClipboardImages(main);
             actions.Controls.Add(paste);
 
