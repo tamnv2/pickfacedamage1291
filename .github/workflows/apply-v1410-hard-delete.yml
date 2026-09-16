@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  patch-build-promote:
+  patch-build-stage:
     runs-on: windows-latest
     timeout-minutes: 25
 
@@ -92,28 +92,6 @@ jobs:
               'Hãy deploy Code.gs v1.4.1 vào đúng deployment /exec đang dùng.',
               'Hãy deploy gateway v1.4.10 vào đúng deployment /exec đang dùng.'
           )
-
-          deploy = Path('.github/workflows/deploy-apps-script.yml')
-          text = deploy.read_text(encoding='utf-8')
-          source_marker = '          grep -Fq "const GATEWAY_VERSION = \'1.4.5\'" apps-script/GoogleGateway/Code.gs\n'
-          if source_marker not in text:
-              raise SystemExit('deploy source marker missing')
-          text = text.replace(
-              source_marker,
-              source_marker + '          grep -Fq "GATEWAY_VERSION_V1410 = \'1.4.10\'" apps-script/GoogleGateway/HardDeleteV1410.gs\n          grep -Fq "hard_delete_reports" apps-script/GoogleGateway/HardDeleteV1410.gs\n',
-              1
-          )
-          pairs = [
-              ("if (data.version !== '1.4.5') process.exit(3);", "if (data.version !== '1.4.10') process.exit(3);"),
-              ("if (!Array.isArray(data.capabilities) || !data.capabilities.includes('rtdb_proxy')) process.exit(4);", "if (!Array.isArray(data.capabilities) || !data.capabilities.includes('rtdb_proxy') || !data.capabilities.includes('hard_delete_reports')) process.exit(4);"),
-              ('Gateway live PASS: version 1.4.5, rtdb_proxy available.', 'Gateway live PASS: version 1.4.10, hard_delete_reports + rtdb_proxy available.'),
-              ('Gateway live chưa trả version 1.4.5 + rtdb_proxy sau thời gian chờ propagation.', 'Gateway live chưa trả version 1.4.10 + hard_delete_reports + rtdb_proxy sau thời gian chờ propagation.')
-          ]
-          for old, new in pairs:
-              if old not in text:
-                  raise SystemExit(f'deploy live marker missing: {old}')
-              text = text.replace(old, new, 1)
-          deploy.write_text(text, encoding='utf-8')
           PY
 
       - name: Generate desktop icon
@@ -169,7 +147,6 @@ jobs:
           git add \
             apps-script/GoogleGateway/Code.gs \
             apps-script/GoogleGateway/HardDeleteV1410.gs \
-            .github/workflows/deploy-apps-script.yml \
             src/PickfaceDamage1291/Program.cs \
             src/PickfaceDamage1291/PickfaceDamage1291.csproj \
             src/PickfaceDamage1291/GoogleGatewayV140.cs \
@@ -177,28 +154,5 @@ jobs:
             src/PickfaceDamage1291/Assets/PickfaceDamage1291.ico \
             tools/GenerateAppIcon.ps1
           git diff --cached --check
-          git commit -m 'release v1.4.10 hard delete UI and icon'
-          PATCH_COMMIT="$(git rev-parse HEAD)"
-          echo "PATCH_COMMIT=$PATCH_COMMIT" >> "$GITHUB_ENV"
+          git commit -m 'stage v1.4.10 hard delete UI and icon'
           git push origin HEAD:fix/v1.4.10-hard-delete-ui-icon
-
-      - name: Promote verified files to main
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          git checkout -B promote-main origin/main
-          git checkout "$PATCH_COMMIT" -- \
-            apps-script/GoogleGateway/Code.gs \
-            apps-script/GoogleGateway/HardDeleteV1410.gs \
-            .github/workflows/deploy-apps-script.yml \
-            src/PickfaceDamage1291/Program.cs \
-            src/PickfaceDamage1291/PickfaceDamage1291.csproj \
-            src/PickfaceDamage1291/GoogleGatewayV140.cs \
-            src/PickfaceDamage1291/V1410Runtime.cs \
-            src/PickfaceDamage1291/Assets/PickfaceDamage1291.ico \
-            tools/GenerateAppIcon.ps1
-          git add -A
-          git diff --cached --check
-          git commit -m 'release v1.4.10 hard delete UI and icon'
-          git push origin HEAD:main
