@@ -17,7 +17,7 @@ internal static class V147Runtime
         try
         {
             FixMainEntryTextAndLayout(main);
-            var gate = AttachAuthoritativeEntryGate(main);
+            // v1.4.9: do not attach the legacy entry gate. V148Runtime is the sole submit-state authority.
             StyleButtons(main);
             AttachEditDialogFixes(main);
             UsageDashboardV147.Attach(main);
@@ -27,7 +27,7 @@ internal static class V147Runtime
                 FixMainEntryTextAndLayout(main);
                 FixCaText(main);
                 StyleButtons(main);
-                gate.Reevaluate();
+                // v1.4.9: submit validation is reevaluated by V148Runtime.
             };
 
             AppLog.Info("V147_RUNTIME_APPLIED", "Đã áp dụng sửa validation/layout v1.4.7.");

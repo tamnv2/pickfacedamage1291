@@ -146,6 +146,14 @@ internal sealed class DamageExportSelectionDialogV148 : Form
         CancelButton = cancel;
     }
 
+    public IReadOnlyList<DateTime> SelectedDates =>
+        _dates.CheckedItems.Cast<DateChoice>().Select(x => x.Date.Date).OrderBy(x => x).ToList();
+
+    public string SelectedShiftLabel =>
+        _shift1.Checked && !_shift2.Checked ? "Ca 1" :
+        !_shift1.Checked && _shift2.Checked ? "Ca 2" :
+        string.Empty;
+
     public List<DamageReport> Filter(IReadOnlyList<DamageReport> reports)
     {
         var selectedDates = _dates.CheckedItems.Cast<DateChoice>().Select(x => x.Date).ToHashSet();
@@ -176,6 +184,8 @@ internal static class DamageReportExportServiceV148
     public static async Task<DamageExportResultV148?> ExportAsync(
         IWin32Window owner,
         IReadOnlyList<DamageReport> selectedReports,
+        IReadOnlyList<DateTime> selectedEntryDates,
+        string selectedShiftLabel,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
@@ -192,24 +202,32 @@ internal static class DamageReportExportServiceV148
             return null;
         }
 
-        var firstDetected = DetectionTime(reports[0]);
-        var lastDetected = DetectionTime(reports[^1]);
-        var oneDetectionDate = firstDetected.Date == lastDetected.Date;
-        var fileDateText = oneDetectionDate
-            ? firstDetected.ToString("ddMMyyyy")
-            : $"{firstDetected:ddMMyyyy}-{lastDetected:ddMMyyyy}";
-        var titleDateText = oneDetectionDate
-            ? $"NGÀY {firstDetected:dd/MM/yyyy}"
-            : $"TỪ {firstDetected:dd/MM/yyyy} ĐẾN {lastDetected:dd/MM/yyyy}";
+        var scopeDates = selectedEntryDates
+            .Select(x => x.Date)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+        if (scopeDates.Count == 0)
+            scopeDates = reports.Select(x => x.CreatedAt.ToLocalTime().Date).Distinct().OrderBy(x => x).ToList();
+
+        var firstScopeDate = scopeDates[0];
+        var lastScopeDate = scopeDates[^1];
+        var oneScopeDate = scopeDates.Count == 1;
+        var titleDateText = oneScopeDate
+            ? $"NGÀY {firstScopeDate:dd/MM/yyyy}"
+            : $"TỪ {firstScopeDate:dd/MM/yyyy} ĐẾN {lastScopeDate:dd/MM/yyyy}";
+        var shiftText = string.IsNullOrWhiteSpace(selectedShiftLabel) ? string.Empty : selectedShiftLabel.Trim();
+        var fileShiftSuffix = shiftText.Length == 0 ? string.Empty : $" - {shiftText}";
+        var titleShiftSuffix = shiftText.Length == 0 ? string.Empty : $" - {shiftText}";
 
         using var save = new SaveFileDialog
         {
             Filter = "Excel Workbook (*.xlsx)|*.xlsx",
             DefaultExt = "xlsx",
             AddExtension = true,
-            FileName = oneDetectionDate
-                ? $"Thông tin hàng hư hỏng Pickface 1291 ngày {fileDateText}.xlsx"
-                : $"Thông tin hàng hư hỏng Pickface 1291 từ {fileDateText}.xlsx",
+            FileName = oneScopeDate
+                ? $"Thông tin hàng hư hỏng Pickface 1291 ngày {firstScopeDate:ddMMyyyy}{fileShiftSuffix}.xlsx"
+                : $"Thông tin hàng hư hỏng Pickface 1291 từ {firstScopeDate:ddMMyyyy} đến {lastScopeDate:ddMMyyyy}{fileShiftSuffix}.xlsx",
             Title = "Lưu danh sách hàng hỏng Pickface 1291"
         };
         if (save.ShowDialog(owner) != DialogResult.OK) return null;
@@ -221,7 +239,7 @@ internal static class DamageReportExportServiceV148
 
         ws.Range(1, 1, 1, 8).Merge();
         var title = ws.Cell(1, 1);
-        title.Value = $"DANH SÁCH HÀNG HỎNG PICKFACE 1291 - {titleDateText}";
+        title.Value = $"DANH SÁCH HÀNG HỎNG PICKFACE 1291 - {titleDateText}{titleShiftSuffix}";
         title.Style.Font.Bold = true;
         title.Style.Font.FontSize = 16;
         title.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;

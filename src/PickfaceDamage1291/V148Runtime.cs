@@ -139,18 +139,8 @@ internal static class V148Runtime
             replacement.Enabled = false;
             try
             {
-                // Always start from the newest server profile. A USER session can be stale after an
-                // ADMIN changes permissions; writing that stale profile back would be denied by RTDB rules.
-                await FirebaseClient.EnsureFreshAsync(session);
-                var fresh = await FirebaseClient.GetProfileAsync(session.Uid, session.IdToken)
-                            ?? throw new InvalidOperationException("Không đọc được hồ sơ tài khoản hiện tại.");
-                if (!fresh.Active)
-                    throw new InvalidOperationException("Tài khoản đã bị khóa hoặc ngừng hoạt động.");
-
-                fresh.DisplayName = value;
-                await FirebaseClient.UpdateUserProfileAsync(session, fresh);
+                var fresh = await FirebaseClient.UpdateOwnDisplayNameAsync(session, value);
                 session.Profile = fresh;
-                SecureSessionStore.Save(session);
                 status.Text = "Đã cập nhật họ tên.";
                 AppLog.Info("SELF_DISPLAY_NAME_UPDATED", "Người dùng đã cập nhật họ tên hiển thị.");
                 NotificationCenter.Show(main, "Đã cập nhật họ tên.", "Tài khoản", MessageBoxIcon.Information);
@@ -243,16 +233,16 @@ internal static class V148Runtime
 
         private void Attach(TabPage entryTab)
         {
-            _sku.TextChanged += (_, _) => Evaluate();
-            _productName.TextChanged += (_, _) => Evaluate();
-            _location.TextChanged += (_, _) => Evaluate();
+            _sku.TextChanged += (_, _) => ScheduleEvaluate();
+            _productName.TextChanged += (_, _) => ScheduleEvaluate();
+            _location.TextChanged += (_, _) => ScheduleEvaluate();
             _shift.SelectedShiftChanged += (_, _) => Evaluate();
             _quantity.ValueChanged += (_, _) => Evaluate();
-            _baseUnit.TextChanged += (_, _) => Evaluate();
+            _baseUnit.TextChanged += (_, _) => ScheduleEvaluate();
             _images.SelectedIndexChanged += (_, _) => Evaluate();
             if (_overrideCheck is not null) _overrideCheck.CheckedChanged += (_, _) => Evaluate();
             if (_overrideSelect is not null) _overrideSelect.SelectedIndexChanged += (_, _) => Evaluate();
-            _status.TextChanged += (_, _) => Evaluate();
+            _status.TextChanged += (_, _) => ScheduleEvaluate();
 
             foreach (var button in FindAll<Button>(entryTab).Where(x =>
                          x.Text.Contains("Thêm ảnh", StringComparison.OrdinalIgnoreCase) ||
@@ -375,9 +365,12 @@ internal static class V148Runtime
         private readonly TabPage _tab;
         private readonly DataGridView _grid;
         private readonly Label _status;
-        private readonly DateTimePicker _date = new();
+        private readonly AvailableDatePickerV149 _date = new();
+        private readonly CheckBox _showDate = new() { Text = "Hiển thị theo ngày", AutoSize = true, Checked = true };
+        private readonly CheckBox _showAllMode = new() { Text = "Hiển thị tất cả", AutoSize = true };
         private readonly Label _mode = new();
         private bool _showAll;
+        private bool _changingMode;
         private bool _rendering;
         private bool _scheduled;
 
@@ -445,39 +438,68 @@ internal static class V148Runtime
             };
             filter.Controls.Add(new Label
             {
+                Text = "Chế độ hiển thị:",
+                AutoSize = true,
+                Padding = new Padding(0, 10, 8, 0)
+            });
+
+            _showDate.Margin = new Padding(2, 8, 14, 4);
+            _showAllMode.Margin = new Padding(2, 8, 18, 4);
+            _showDate.CheckedChanged += (_, _) =>
+            {
+                if (_changingMode) return;
+                if (_showDate.Checked)
+                {
+                    ApplyFilterMode(false);
+                }
+                else if (!_showAllMode.Checked)
+                {
+                    _changingMode = true;
+                    _showDate.Checked = true;
+                    _changingMode = false;
+                }
+            };
+            _showAllMode.CheckedChanged += (_, _) =>
+            {
+                if (_changingMode) return;
+                if (_showAllMode.Checked)
+                {
+                    if (MessageBox.Show(
+                            _main,
+                            "Hiển thị toàn bộ dữ liệu có thể làm chậm ứng dụng khi số lượng phiếu lớn. Vẫn tiếp tục?",
+                            "Hiển thị tất cả",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Warning) != DialogResult.Yes)
+                    {
+                        _changingMode = true;
+                        _showAllMode.Checked = false;
+                        _showDate.Checked = true;
+                        _changingMode = false;
+                        return;
+                    }
+                    ApplyFilterMode(true);
+                }
+                else if (!_showDate.Checked)
+                {
+                    ApplyFilterMode(false);
+                }
+            };
+            filter.Controls.Add(_showDate);
+            filter.Controls.Add(_showAllMode);
+
+            filter.Controls.Add(new Label
+            {
                 Text = "Ngày nhập thực tế:",
                 AutoSize = true,
                 Padding = new Padding(0, 10, 6, 0)
             });
-            _date.Format = DateTimePickerFormat.Custom;
-            _date.CustomFormat = "dd/MM/yyyy";
-            _date.Value = DateTime.Today;
-            _date.Width = 125;
+            _date.Width = 150;
             _date.Margin = new Padding(2, 5, 8, 4);
+            _date.ValueChanged += (_, _) =>
+            {
+                if (!_showAll && !_rendering) Render();
+            };
             filter.Controls.Add(_date);
-
-            var showDate = new Button { Text = "Hiển thị ngày", AutoSize = true };
-            var showAll = new Button { Text = "Hiển thị toàn bộ", AutoSize = true };
-            AppUiStyle.StyleButton(showDate, ButtonVisual.Normal);
-            AppUiStyle.StyleButton(showAll, ButtonVisual.Normal);
-            showDate.Click += (_, _) =>
-            {
-                _showAll = false;
-                Render();
-            };
-            showAll.Click += (_, _) =>
-            {
-                if (MessageBox.Show(
-                        _main,
-                        "Hiển thị toàn bộ dữ liệu có thể làm chậm ứng dụng khi số lượng phiếu lớn. Vẫn tiếp tục?",
-                        "Hiển thị toàn bộ",
-                        MessageBoxButtons.YesNo,
-                        MessageBoxIcon.Warning) != DialogResult.Yes) return;
-                _showAll = true;
-                Render();
-            };
-            filter.Controls.Add(showDate);
-            filter.Controls.Add(showAll);
 
             _mode.AutoSize = true;
             _mode.ForeColor = Color.DimGray;
@@ -488,6 +510,23 @@ internal static class V148Runtime
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.Controls.Add(filter, 0, filterRow);
             ScheduleRender();
+        }
+
+        private void ApplyFilterMode(bool showAll)
+        {
+            _changingMode = true;
+            try
+            {
+                _showAll = showAll;
+                _showDate.Checked = !showAll;
+                _showAllMode.Checked = showAll;
+                _date.Enabled = !showAll && _date.HasAvailableDates;
+            }
+            finally
+            {
+                _changingMode = false;
+            }
+            Render();
         }
 
         private void ScheduleRender()
@@ -515,6 +554,8 @@ internal static class V148Runtime
             try
             {
                 var rows = Database.GetReports(int.MaxValue);
+                _date.SetAvailableDates(rows.Select(x => x.CreatedAt.ToLocalTime().Date));
+                _date.Enabled = !_showAll && _date.HasAvailableDates;
                 var selectedDate = _date.Value.Date;
                 var visible = (_showAll
                         ? rows
@@ -652,7 +693,12 @@ internal static class V148Runtime
                 }
 
                 var progress = new Progress<string>(s => _status.Text = s);
-                var result = await DamageReportExportServiceV148.ExportAsync(_main, selected, progress);
+                var result = await DamageReportExportServiceV148.ExportAsync(
+                    _main,
+                    selected,
+                    select.SelectedDates,
+                    select.SelectedShiftLabel,
+                    progress);
                 if (result is null) return;
                 _status.Text = $"Đã xuất {result.ReportCount:N0} phiếu.";
                 var imageNote = result.MissingImages > 0 ? $" Không tải/nhúng được {result.MissingImages:N0} ảnh." : string.Empty;
