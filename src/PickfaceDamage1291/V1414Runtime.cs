@@ -1,3 +1,5 @@
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Reflection;
 
 namespace PickfaceDamage1291;
@@ -5,6 +7,8 @@ namespace PickfaceDamage1291;
 internal static class V1414Runtime
 {
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+    private const int MaxPastedImageLongEdge = 1920;
+    private const float NormalizedDpi = 96f;
     private static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".heic", ".webp"];
 
     public static void Apply(MainForm main)
@@ -13,7 +17,7 @@ internal static class V1414Runtime
         {
             ReplaceQuantityStepper(main);
             EnableClipboardImagePaste(main);
-            AppLog.Info("V1414_RUNTIME_APPLIED", "Đã áp dụng input số lượng dạng nhập số và dán ảnh từ clipboard.");
+            AppLog.Info("V1414_RUNTIME_APPLIED", "Đã áp dụng input số lượng dạng nhập số và dán ảnh từ clipboard có tự chuẩn hoá kích thước.");
         }
         catch (Exception ex)
         {
@@ -231,8 +235,8 @@ internal static class V1414Runtime
         var temp = Path.Combine(folder, $"clipboard_{Guid.NewGuid():N}.png");
         try
         {
-            using var bitmap = new Bitmap(source);
-            bitmap.Save(temp, System.Drawing.Imaging.ImageFormat.Png);
+            using var bitmap = NormalizePastedImage(source);
+            bitmap.Save(temp, ImageFormat.Png);
             var hash = ImageHashService.Sha256File(temp);
             if (!draftHashes.Add(hash))
             {
@@ -244,6 +248,16 @@ internal static class V1414Runtime
             var target = Path.Combine(folder, $"{Guid.NewGuid():N}_{hash[..12]}.png");
             File.Move(temp, target);
             draftImages.Add(target);
+
+            AppLog.Info("CLIPBOARD_IMAGE_NORMALIZED", "Ảnh clipboard đã được chuẩn hoá kích thước trước khi lưu.", new Dictionary<string, object?>
+            {
+                ["source_width"] = source.Width,
+                ["source_height"] = source.Height,
+                ["saved_width"] = bitmap.Width,
+                ["saved_height"] = bitmap.Height,
+                ["dpi"] = NormalizedDpi,
+                ["max_long_edge"] = MaxPastedImageLongEdge
+            });
             return true;
         }
         catch
@@ -251,6 +265,39 @@ internal static class V1414Runtime
             try { if (File.Exists(temp)) File.Delete(temp); } catch { }
             throw;
         }
+    }
+
+    private static Bitmap NormalizePastedImage(Image source)
+    {
+        var sourceWidth = Math.Max(1, source.Width);
+        var sourceHeight = Math.Max(1, source.Height);
+        var longEdge = Math.Max(sourceWidth, sourceHeight);
+        var scale = longEdge > MaxPastedImageLongEdge
+            ? MaxPastedImageLongEdge / (double)longEdge
+            : 1d;
+
+        var targetWidth = Math.Max(1, (int)Math.Round(sourceWidth * scale));
+        var targetHeight = Math.Max(1, (int)Math.Round(sourceHeight * scale));
+        var target = new Bitmap(targetWidth, targetHeight, PixelFormat.Format32bppArgb);
+        target.SetResolution(NormalizedDpi, NormalizedDpi);
+
+        using var graphics = Graphics.FromImage(target);
+        graphics.CompositingMode = CompositingMode.SourceCopy;
+        graphics.CompositingQuality = CompositingQuality.HighQuality;
+        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        graphics.SmoothingMode = SmoothingMode.HighQuality;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        graphics.Clear(Color.Transparent);
+        graphics.DrawImage(
+            source,
+            new Rectangle(0, 0, targetWidth, targetHeight),
+            0,
+            0,
+            sourceWidth,
+            sourceHeight,
+            GraphicsUnit.Pixel);
+
+        return target;
     }
 
     private static bool AddImageFile(MainForm main, string source, List<string> draftImages, HashSet<string> draftHashes)
