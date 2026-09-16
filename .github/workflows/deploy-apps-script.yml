@@ -42,8 +42,11 @@ jobs:
           grep -Fq "ROOT_FOLDER_ID: '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC'" apps-script/GoogleGateway/Code.gs
           grep -Fq "const GATEWAY_VERSION = '1.4.5'" apps-script/GoogleGateway/Code.gs
           grep -Fq "'rtdb_proxy'" apps-script/GoogleGateway/Code.gs
-          grep -Fq "GATEWAY_VERSION_V1410 = '1.4.10'" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "GATEWAY_VERSION_V1410 = '1.4.12'" apps-script/GoogleGateway/HardDeleteV1410.gs
           grep -Fq "hard_delete_reports" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "firebase_refresh_session" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "firebase_admin_create_user" apps-script/GoogleGateway/HardDeleteV1410.gs
+          test -f apps-script/GoogleGateway/OfficeNetworkV1412.gs
 
       - name: Configure clasp safely
         shell: bash
@@ -146,11 +149,14 @@ jobs:
               if RESPONSE="$BODY" node <<'NODE'
           const data = JSON.parse(process.env.RESPONSE || '{}');
           if (data.ok !== true) process.exit(2);
-          if (data.version !== '1.4.10') process.exit(3);
-          if (!Array.isArray(data.capabilities) || !data.capabilities.includes('rtdb_proxy') || !data.capabilities.includes('hard_delete_reports')) process.exit(4);
+          if (data.version !== '1.4.12') process.exit(3);
+          const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
+          for (const cap of ['rtdb_proxy','hard_delete_reports','firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412']) {
+            if (!caps.includes(cap)) process.exit(4);
+          }
           NODE
               then
-                echo "Gateway live PASS: version 1.4.10, hard_delete_reports + rtdb_proxy available."
+                echo "Gateway live PASS: version 1.4.12, Office/PDA adaptive capabilities available."
                 exit 0
               fi
             fi
@@ -159,7 +165,7 @@ jobs:
             sleep 5
           done
 
-          echo "::error::Gateway live chưa trả version 1.4.10 + hard_delete_reports + rtdb_proxy sau thời gian chờ propagation."
+          echo "::error::Gateway live chưa trả version 1.4.12 + Office/PDA adaptive capabilities sau thời gian chờ propagation."
           exit 1
 
       - name: Cleanup credentials
