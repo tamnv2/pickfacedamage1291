@@ -1,7 +1,8 @@
-const GATEWAY_VERSION_V1410 = '1.4.10';
+const GATEWAY_VERSION_V1410 = '1.4.12';
 const GATEWAY_CAPABILITIES_V1410 = Object.freeze([
   'pull_changes','push_products','pull_products','append_audit','list_audit','delete_audit_range',
-  'upload_log','sync_report','hard_delete_reports','get_image','rtdb_proxy'
+  'upload_log','sync_report','hard_delete_reports','get_image','rtdb_proxy',
+  'firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412'
 ]);
 
 // v1.4.10 wrapper. Legacy doPost in Code.gs is renamed to doPostLegacy_ during verified promotion.
@@ -14,6 +15,17 @@ function doPost(e) {
 
     if (action === 'gateway_info') {
       return json_({ ok:true, version:GATEWAY_VERSION_V1410, capabilities:GATEWAY_CAPABILITIES_V1410 });
+    }
+
+    if (action === 'firebase_refresh_session') {
+      return json_({ ok:true, ...firebaseRefreshSessionV1412_(String(request.session_refresh || '')) });
+    }
+
+    if (action === 'firebase_admin_create_user') {
+      const idToken = String(request.id_token || '');
+      const auth = authenticateFirebase_(idToken);
+      requireAdmin_(auth.profile);
+      return json_({ ok:true, ...firebaseAdminCreateUserV1412_(auth, idToken, payload) });
     }
 
     if (action === 'hard_delete_reports') {
