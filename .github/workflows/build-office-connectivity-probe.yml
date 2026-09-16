@@ -1,0 +1,96 @@
+name: Build Office Connectivity Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/OfficeConnectivityProbe/**'
+      - '.github/workflows/build-office-connectivity-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.repository == 'tamnv2/pickfacedamage1291'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify fixed project scope
+        shell: pwsh
+        run: |
+          $scope = Get-Content 'PROJECT_SCOPE_LOCK.md' -Raw
+          if ($scope -notmatch 'tamnv2/pickfacedamage1291') { throw 'Repo scope mismatch' }
+          if ($scope -notmatch '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC') { throw 'Drive scope mismatch' }
+          if ($scope -notmatch 'pickface-damage-1291') { throw 'GCP scope mismatch' }
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore tools/OfficeConnectivityProbe/OfficeConnectivityProbe.csproj
+
+      - name: Publish standalone probe
+        run: >-
+          dotnet publish tools/OfficeConnectivityProbe/OfficeConnectivityProbe.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -o publish/office-probe
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+
+      - name: Verify output and hash
+        id: verify
+        shell: pwsh
+        run: |
+          $exe = 'publish/office-probe/PickfaceOfficeProbe.exe'
+          if (!(Test-Path $exe)) { throw 'PickfaceOfficeProbe.exe not found' }
+          $size = (Get-Item $exe).Length
+          if ($size -lt 100000) { throw "Unexpectedly small EXE: $size" }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "size=$size" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          Write-Host "EXE size=$size sha256=$hash"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PickfaceOfficeProbe-win-x64-v1.0.0
+          path: publish/office-probe/PickfaceOfficeProbe.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish dedicated diagnostic release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: office-probe-v1.0.0
+          EXE: publish/office-probe/PickfaceOfficeProbe.exe
+          SHA256: ${{ steps.verify.outputs.sha256 }}
+          SIZE: ${{ steps.verify.outputs.size }}
+        run: |
+          gh release view $env:TAG --repo tamnv2/pickfacedamage1291 *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $env:TAG already exists; build artifact remains available."
+            exit 0
+          }
+          $notes = @"
+          Standalone Office connectivity diagnostic for PICKFACE DAMAGE 1291.
+
+          Read-only tests only: DNS, TCP 443, TLS, HTTP via Windows system proxy and direct/no-proxy, curl.exe, PowerShell Invoke-WebRequest, Google Apps Script gateway_info, Firebase endpoints, GitHub endpoints, network interfaces, WinHTTP proxy, ipconfig and route table.
+
+          Output log: OfficeProbeLogs/office_probe_*.log next to the EXE when writable.
+
+          SHA-256: $env:SHA256
+          Size: $env:SIZE bytes
+          "@
+          gh release create $env:TAG $env:EXE --repo tamnv2/pickfacedamage1291 --target $env:GITHUB_SHA --title "Pickface Office Connectivity Probe v1.0.0" --notes $notes
