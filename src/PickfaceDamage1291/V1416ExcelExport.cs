@@ -249,11 +249,15 @@ internal static class DamageReportExportServiceV1416
 
     private static void ClearBorders(IXLRange range)
     {
-        range.Style.Border.TopBorder = XLBorderStyleValues.None;
-        range.Style.Border.BottomBorder = XLBorderStyleValues.None;
-        range.Style.Border.LeftBorder = XLBorderStyleValues.None;
-        range.Style.Border.RightBorder = XLBorderStyleValues.None;
-        range.Style.Border.InsideHorizontalBorder = XLBorderStyleValues.None;
-        range.Style.Border.InsideVerticalBorder = XLBorderStyleValues.None;
+        // ClosedXML 0.102 does not expose InsideHorizontal/InsideVertical on IXLBorder.
+        // Clear every cell explicitly so the title row is guaranteed border-free and the
+        // content border can then be applied cleanly from row 2 downward.
+        foreach (var cell in range.Cells())
+        {
+            cell.Style.Border.TopBorder = XLBorderStyleValues.None;
+            cell.Style.Border.BottomBorder = XLBorderStyleValues.None;
+            cell.Style.Border.LeftBorder = XLBorderStyleValues.None;
+            cell.Style.Border.RightBorder = XLBorderStyleValues.None;
+        }
     }
 }
