@@ -1,0 +1,184 @@
+name: Apply v1.4.17 Log Session Network Optimization
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v1417-log-session-network-optimization.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.repository == 'tamnv2/pickfacedamage1291'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify fixed project scope and source baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'tamnv2/pickfacedamage1291' PROJECT_SCOPE_LOCK.md
+          grep -Fq '16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC' PROJECT_SCOPE_LOCK.md
+          grep -Fq 'pickface-damage-1291' PROJECT_SCOPE_LOCK.md
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/AppLog.cs)" = 'ead50ad76019284b3f9d1de552017adffd990ea4'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/V130Runtime.cs)" = '3e564b2c1a23773be8e20ca44ccd01512024a5df'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/V142Runtime.cs)" = '0c06b186016f7819922b558ecc71eb36aaa475df'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/NetworkHttpClientFactory.cs)" = '3f15d197f3f61f3c54a0d06ef7e626c29e5f3968'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/OfficeNetworkRouteV1413.cs)" = '2f8c3abf9e74bf7028aafda24d0f353fc4523acc'
+          test "$(git rev-parse HEAD:src/PickfaceDamage1291/PickfaceDamage1291.csproj)" = 'b83a5b352efffa4cdaf524386649905c049f5b02'
+
+      - name: Apply v1.4.17 source patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8', newline='')
+
+          def replace_once(text, old, new, label):
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {text.count(old)}')
+              return text.replace(old, new, 1)
+
+          # 1) Logs: purge previous-version logs on first startup after an update;
+          # rotate to a fresh file after upload so old/new sessions never share a filename.
+          p = 'src/PickfaceDamage1291/AppLog.cs'
+          s = read(p)
+          s = replace_once(s,
+              '    private static int _partIndex = 1;\n',
+              '    private static int _partIndex = 1;\n    private static int _oldLogsRemovedOnVersionChange;\n    private static string VersionMarkerPath => Path.Combine(AppPaths.Data, "log_version.txt");\n',
+              'AppLog fields')
+          s = replace_once(s,
+              '''        lock (Gate)\n        {\n            if (_initialized) return;\n            AppPaths.EnsureCreated();\n            Directory.CreateDirectory(AppPaths.Logs);\n            _initialized = true;\n        }\n''',
+              '''        lock (Gate)\n        {\n            if (_initialized) return;\n            AppPaths.EnsureCreated();\n            Directory.CreateDirectory(AppPaths.Logs);\n            _oldLogsRemovedOnVersionChange = ResetForVersionIfNeededLocked();\n            _initialized = true;\n        }\n''',
+              'AppLog initialize')
+          s = replace_once(s,
+              '            ["log_file"] = Path.GetFileName(GetCurrentWritablePathForInfo())\n',
+              '            ["log_file"] = Path.GetFileName(GetCurrentWritablePathForInfo()),\n            ["old_logs_removed_after_update"] = _oldLogsRemovedOnVersionChange\n',
+              'AppLog ready details')
+          s = replace_once(s,
+              '''                    if (string.Equals(_currentWritablePath, file, StringComparison.OrdinalIgnoreCase))\n                        _currentWritablePath = null;\n''',
+              '''                    if (string.Equals(_currentWritablePath, file, StringComparison.OrdinalIgnoreCase))\n                    {\n                        _currentWritablePath = null;\n                        _partIndex++;\n                    }\n''',
+              'AppLog upload rotation')
+          s = replace_once(s,
+              '''        progress?.Report($"Đã gửi thành công {sent:N0} file log. File đã gửi đã được xoá khỏi máy.");\n        return sent;\n''',
+              '''        Info("LOG_UPLOAD_LOCAL_RESET", "Đã gửi log lên Drive; log cũ đã được xoá và bắt đầu chu kỳ log local mới.",\n            new Dictionary<string, object?> { ["sent_files"] = sent });\n        progress?.Report($"Đã gửi thành công {sent:N0} file log. Log cũ đã được xoá; ứng dụng đang ghi vào file log mới.");\n        return sent;\n''',
+              'AppLog upload completion')
+          marker = '    private static void Write(\n'
+          reset_method = '''    private static int ResetForVersionIfNeededLocked()\n    {\n        var current = VersionUpdateService.CurrentVersionText.Trim();\n        var previous = string.Empty;\n        try\n        {\n            if (File.Exists(VersionMarkerPath))\n                previous = File.ReadAllText(VersionMarkerPath).Trim();\n        }\n        catch\n        {\n            previous = string.Empty;\n        }\n\n        if (string.Equals(previous, current, StringComparison.OrdinalIgnoreCase)) return 0;\n\n        var deleted = 0;\n        foreach (var path in Directory.EnumerateFiles(AppPaths.Logs, "*", SearchOption.TopDirectoryOnly).ToList())\n        {\n            if (!path.EndsWith(".log", StringComparison.OrdinalIgnoreCase) &&\n                !path.EndsWith(".send", StringComparison.OrdinalIgnoreCase)) continue;\n            try\n            {\n                File.Delete(path);\n                deleted++;\n            }\n            catch\n            {\n                // A locked diagnostic file is left untouched; logging must never block startup.\n            }\n        }\n\n        _currentWritablePath = null;\n        _partIndex = 1;\n        try\n        {\n            File.WriteAllText(VersionMarkerPath, current, new System.Text.UTF8Encoding(false));\n        }\n        catch\n        {\n            // Marker failure only means the next startup may retry cleanup.\n        }\n        return deleted;\n    }\n\n'''
+          s = replace_once(s, marker, reset_method + marker, 'AppLog reset method')
+          write(p, s)
+
+          # 2) Settings: allow changing offline-login / keep-signed-in while already logged in.
+          p = 'src/PickfaceDamage1291/V130Runtime.cs'
+          s = read(p)
+          pattern = re.compile(r'    private static void AddLogoutSettings\(Form form\)\n    \{.*?\n    \}\n\n    private static void AddRow', re.S)
+          replacement = '''    private static void AddLogoutSettings(Form form)\n    {\n        var tabs = FindAll<TabControl>(form).FirstOrDefault();\n        var settings = tabs?.TabPages.Cast<TabPage>().FirstOrDefault(x => x.Text == "Cài đặt");\n        if (settings is null) return;\n        var flow = settings.Controls.OfType<FlowLayoutPanel>().FirstOrDefault();\n        if (flow is null || flow.Controls.OfType<GroupBox>().Any(x => x.Text == "Phiên đăng nhập")) return;\n\n        var session = AppSession.Current;\n        var prefs = LoginPreferencesStore.Load();\n        var box = new GroupBox\n        {\n            Text = "Phiên đăng nhập",\n            Width = 900,\n            AutoSize = true,\n            AutoSizeMode = AutoSizeMode.GrowAndShrink,\n            Margin = new Padding(0, 0, 0, 18),\n            Padding = new Padding(12),\n            Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold)\n        };\n        var panel = new TableLayoutPanel\n        {\n            Dock = DockStyle.Top,\n            AutoSize = true,\n            AutoSizeMode = AutoSizeMode.GrowAndShrink,\n            ColumnCount = 2,\n            RowCount = 0,\n            Padding = new Padding(12)\n        };\n        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));\n        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));\n        AddRow(panel, "Tài khoản", new Label { Text = session?.Profile.Username ?? "-", AutoSize = true });\n\n        var allowOffline = new CheckBox\n        {\n            Text = "Cho phép đăng nhập offline",\n            Checked = prefs.AllowOfflineLogin,\n            AutoSize = true,\n            Margin = new Padding(0, 2, 18, 2)\n        };\n        var keepSignedIn = new CheckBox\n        {\n            Text = "Duy trì đăng nhập khi mở lại ứng dụng",\n            Checked = prefs.KeepSignedIn,\n            AutoSize = true,\n            Margin = new Padding(0, 2, 18, 2)\n        };\n        var options = new FlowLayoutPanel\n        {\n            AutoSize = true,\n            AutoSizeMode = AutoSizeMode.GrowAndShrink,\n            WrapContents = true,\n            FlowDirection = FlowDirection.LeftToRight\n        };\n        options.Controls.AddRange([allowOffline, keepSignedIn]);\n        AddRow(panel, "Tùy chọn đăng nhập", options);\n\n        var preferenceStatus = new Label\n        {\n            AutoSize = true,\n            ForeColor = Color.DimGray,\n            MaximumSize = new Size(620, 0)\n        };\n        AddRow(panel, "Trạng thái", preferenceStatus);\n\n        void PersistPreferences()\n        {\n            var next = new LoginPreferences\n            {\n                AllowOfflineLogin = allowOffline.Checked,\n                KeepSignedIn = keepSignedIn.Checked\n            };\n            LoginPreferencesStore.Save(next);\n\n            if (next.AllowOfflineLogin || next.KeepSignedIn)\n            {\n                if (AppSession.Current is { } active) SecureSessionStore.Save(active);\n            }\n            else\n            {\n                SecureSessionStore.Clear();\n            }\n\n            preferenceStatus.Text = $"Đăng nhập offline: {(next.AllowOfflineLogin ? "Bật" : "Tắt")} • Duy trì đăng nhập: {(next.KeepSignedIn ? "Bật" : "Tắt")}. Thay đổi có hiệu lực ngay.";\n            AppLog.Info("LOGIN_PREFERENCES_CHANGED", "Đã cập nhật tùy chọn phiên đăng nhập trong khi ứng dụng đang chạy.",\n                new Dictionary<string, object?>\n                {\n                    ["allow_offline_login"] = next.AllowOfflineLogin,\n                    ["keep_signed_in"] = next.KeepSignedIn\n                });\n        }\n\n        allowOffline.CheckedChanged += (_, _) => PersistPreferences();\n        keepSignedIn.CheckedChanged += (_, _) => PersistPreferences();\n        preferenceStatus.Text = $"Đăng nhập offline: {(prefs.AllowOfflineLogin ? "Bật" : "Tắt")} • Duy trì đăng nhập: {(prefs.KeepSignedIn ? "Bật" : "Tắt")}. Có thể thay đổi ngay tại đây.";\n\n        var logout = new Button { Text = "Đăng xuất tài khoản", AutoSize = true, Height = 36, Padding = new Padding(10, 0, 10, 0) };\n        logout.Click += (_, _) =>\n        {\n            var choice = MessageBox.Show(form, "Đăng xuất tài khoản hiện tại?", "Xác nhận đăng xuất", MessageBoxButtons.YesNo, MessageBoxIcon.Question);\n            if (choice != DialogResult.Yes) return;\n            _logoutRequested = true;\n            form.Close();\n        };\n        AddRow(panel, "Thao tác", logout);\n        box.Controls.Add(panel);\n        flow.Controls.Add(box);\n    }\n\n    private static void AddRow'''
+          s2, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+              raise SystemExit(f'V130 settings function: expected 1 match, found {n}')
+          write(p, s2)
+
+          # 3) Coalesce Windows network-change storms centrally and reduce connection churn.
+          p = 'src/PickfaceDamage1291/NetworkHttpClientFactory.cs'
+          s = read(p)
+          s = replace_once(s,
+              '    private static readonly TimeSpan RtdbRelayCooldown = TimeSpan.FromHours(8);\n',
+              '    private static readonly TimeSpan RtdbRelayCooldown = TimeSpan.FromHours(8);\n    private static readonly object NetworkChangeGate = new();\n    private static readonly TimeSpan NetworkChangeDebounce = TimeSpan.FromMilliseconds(900);\n    private static CancellationTokenSource? _networkChangeDebounce;\n    private static string _pendingNetworkState = "unknown";\n',
+              'Network debounce fields')
+          s = replace_once(s,
+              '''        PooledConnectionLifetime = TimeSpan.FromSeconds(5),\n        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(5),\n        ConnectTimeout = TimeSpan.FromSeconds(12)\n''',
+              '''        PooledConnectionLifetime = TimeSpan.FromSeconds(15),\n        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),\n        ConnectTimeout = TimeSpan.FromSeconds(8)\n''',
+              'HTTP pool tuning')
+          pattern = re.compile(r'    private static void MarkNetworkChanged\(string state\)\n    \{.*?\n    \}\n\n    internal static void PreferRtdbRelayForCurrentNetwork', re.S)
+          replacement = '''    private static void MarkNetworkChanged(string state)\n    {\n        Interlocked.Exchange(ref _lastNetworkChangeUtcTicks, DateTime.UtcNow.Ticks);\n\n        // Route state is invalid immediately, but expensive recovery work is emitted only once\n        // after Windows finishes its burst of address/availability notifications.\n        Interlocked.Exchange(ref _rtdbRelayUntilUtcTicks, 0);\n        lock (NetworkChangeGate)\n        {\n            _pendingNetworkState = state;\n            var previous = _networkChangeDebounce;\n            try { previous?.Cancel(); } catch { }\n            previous?.Dispose();\n\n            var current = new CancellationTokenSource();\n            _networkChangeDebounce = current;\n            _ = Task.Run(async () =>\n            {\n                try\n                {\n                    await Task.Delay(NetworkChangeDebounce, current.Token);\n                    string finalState;\n                    lock (NetworkChangeGate)\n                    {\n                        finalState = _pendingNetworkState;\n                        if (ReferenceEquals(_networkChangeDebounce, current)) _networkChangeDebounce = null;\n                    }\n\n                    try\n                    {\n                        AppLog.Info("NETWORK_CHANGED", "Windows đã ổn định sau cụm thay đổi kết nối mạng.",\n                            new Dictionary<string, object?> { ["state"] = finalState });\n                    }\n                    catch { }\n\n                    try { NetworkChanged?.Invoke(); } catch { }\n                }\n                catch (OperationCanceledException)\n                {\n                    // A newer Windows network event replaced this one.\n                }\n                finally\n                {\n                    current.Dispose();\n                }\n            });\n        }\n    }\n\n    internal static void PreferRtdbRelayForCurrentNetwork'''
+          s2, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+              raise SystemExit(f'Network MarkNetworkChanged: expected 1 match, found {n}')
+          write(p, s2)
+
+          # 4) The central NetworkChanged event is already debounced; choose Office route immediately.
+          p = 'src/PickfaceDamage1291/OfficeNetworkRouteV1413.cs'
+          s = read(p)
+          pattern = re.compile(r'    private static void OnNetworkChanged\(\)\n    \{.*?\n    \}\n\n    private static bool SameEndpoint', re.S)
+          replacement = '''    private static void OnNetworkChanged()\n    {\n        try\n        {\n            ApplyCurrentNetworkPreference("windows_network_changed");\n        }\n        catch (Exception ex)\n        {\n            AppLog.Warning("OFFICE_ROUTE_REEVALUATE_FAILED", ex.Message);\n        }\n    }\n\n    private static bool SameEndpoint'''
+          s2, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+              raise SystemExit(f'Office route handler: expected 1 match, found {n}')
+          s2 = s2.replace('    private static readonly object Gate = new();\n', '')
+          s2 = s2.replace('    private static CancellationTokenSource? _networkChangeDebounce;\n', '')
+          write(p, s2)
+
+          # 5) Faster recovery: short debounce; full two-way sync only when local writes are pending.
+          p = 'src/PickfaceDamage1291/V142Runtime.cs'
+          s = read(p)
+          s = replace_once(s, '                await Task.Delay(1500, ct);\n', '                await Task.Delay(350, ct);\n', 'Recovery debounce')
+          s = replace_once(s, '                    var delays = new[] { 0, 2500, 6000 };\n', '                    var delays = new[] { 0, 1000, 2500 };\n', 'Recovery retry delays')
+          old = '''                            var progress = new Progress<string>(message => TaskProgressCenter.Report(form, "network-recovery", message));\n                            if (session.Profile.IsAdmin || session.Profile.HasPermission("sync_google") || session.Profile.HasPermission("damage_entry"))\n                                await CloudSyncService.SyncNowAsync(progress, ct);\n                            else if (session.Profile.HasPermission("view_reports"))\n                                await CloudSyncService.PullSharedDataAsync(progress, ct);\n\n                            BackgroundSyncCoordinator.EnqueuePending();\n'''
+          new = '''                            var progress = new Progress<string>(message => TaskProgressCenter.Report(form, "network-recovery", message));\n                            var canWrite = session.Profile.IsAdmin || session.Profile.HasPermission("sync_google") || session.Profile.HasPermission("damage_entry");\n                            var canRead = canWrite || session.Profile.HasPermission("view_reports");\n                            var hasPendingWrites = canWrite && (Database.GetPendingReports().Any() || (session.Profile.IsAdmin && SyncCacheStore.ProductsDirty));\n\n                            // Most Windows network notifications do not mean business data changed.\n                            // Avoid the heavier two-pass SyncNow path unless this laptop actually has local writes waiting.\n                            if (hasPendingWrites)\n                                await CloudSyncService.SyncNowAsync(progress, ct);\n                            else if (canRead)\n                                await CloudSyncService.PullSharedDataAsync(progress, ct);\n\n                            BackgroundSyncCoordinator.EnqueuePending();\n'''
+          s = replace_once(s, old, new, 'Recovery sync strategy')
+          old = '''                            AppLog.Exception("NETWORK_RECOVERY_RETRY", ex, new Dictionary<string, object?>\n                            {\n                                ["attempt"] = attempt + 1\n                            });\n'''
+          new = '''                            AppLog.Warning("NETWORK_RECOVERY_RETRY", ex.Message, new Dictionary<string, object?>\n                            {\n                                ["attempt"] = attempt + 1,\n                                ["error_type"] = ex.GetType().Name\n                            });\n'''
+          s = replace_once(s, old, new, 'Recovery transient logging')
+          write(p, s)
+
+          # 6) Release version.
+          p = 'src/PickfaceDamage1291/PickfaceDamage1291.csproj'
+          s = read(p)
+          for old, new in [
+              ('<Version>1.4.16</Version>', '<Version>1.4.17</Version>'),
+              ('<InformationalVersion>1.4.16</InformationalVersion>', '<InformationalVersion>1.4.17</InformationalVersion>'),
+              ('<AssemblyVersion>1.4.16.0</AssemblyVersion>', '<AssemblyVersion>1.4.17.0</AssemblyVersion>'),
+              ('<FileVersion>1.4.16.0</FileVersion>', '<FileVersion>1.4.17.0</FileVersion>'),
+          ]:
+              s = replace_once(s, old, new, 'Version bump')
+          write(p, s)
+          PY
+
+      - name: Validate diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff -- src/PickfaceDamage1291/AppLog.cs src/PickfaceDamage1291/V130Runtime.cs src/PickfaceDamage1291/V142Runtime.cs src/PickfaceDamage1291/NetworkHttpClientFactory.cs src/PickfaceDamage1291/OfficeNetworkRouteV1413.cs src/PickfaceDamage1291/PickfaceDamage1291.csproj
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build and verify portable EXE
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj
+          dotnet publish src/PickfaceDamage1291/PickfaceDamage1291.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o .tmp-v1417
+          test -s .tmp-v1417/PickfaceDamage1291.exe
+
+      - name: Commit tested source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/PickfaceDamage1291/AppLog.cs \
+                  src/PickfaceDamage1291/V130Runtime.cs \
+                  src/PickfaceDamage1291/V142Runtime.cs \
+                  src/PickfaceDamage1291/NetworkHttpClientFactory.cs \
+                  src/PickfaceDamage1291/OfficeNetworkRouteV1413.cs \
+                  src/PickfaceDamage1291/PickfaceDamage1291.csproj
+          git commit -m 'release v1.4.17 log session and network optimization'
+          git push origin HEAD:main
