@@ -11,10 +11,11 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <Version>1.4.9</Version>
-    <InformationalVersion>1.4.9</InformationalVersion>
-    <AssemblyVersion>1.4.9.0</AssemblyVersion>
-    <FileVersion>1.4.9.0</FileVersion>
+    <Version>1.4.10</Version>
+    <InformationalVersion>1.4.10</InformationalVersion>
+    <AssemblyVersion>1.4.10.0</AssemblyVersion>
+    <FileVersion>1.4.10.0</FileVersion>
+    <ApplicationIcon>Assets\PickfaceDamage1291.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="MainForm.cs;MainFormV2.cs;AdminUsersControl.cs;GoogleService.cs;VersionUpdateService.cs;UiRuntimeFixes.cs" />

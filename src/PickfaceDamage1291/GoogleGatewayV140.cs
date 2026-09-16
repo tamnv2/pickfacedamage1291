@@ -65,10 +65,10 @@ internal static class GoogleGatewayV140
             foreach (var item in node.EnumerateArray())
                 if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString())) capabilities.Add(item.GetString()!);
 
-        var required = new[] { "pull_changes", "push_products", "pull_products", "append_audit", "list_audit", "delete_audit_range", "upload_log", "sync_report", "get_image" };
+        var required = new[] { "pull_changes", "push_products", "pull_products", "append_audit", "list_audit", "delete_audit_range", "upload_log", "sync_report", "hard_delete_reports", "get_image" };
         var missing = required.Where(x => !capabilities.Contains(x)).ToArray();
         if (missing.Length > 0)
-            throw new InvalidOperationException($"Google Gateway {(string.IsNullOrWhiteSpace(version) ? "?" : version)} thiếu chức năng: {string.Join(", ", missing)}. Hãy deploy Code.gs v1.4.1 vào đúng deployment /exec đang dùng.");
+            throw new InvalidOperationException($"Google Gateway {(string.IsNullOrWhiteSpace(version) ? "?" : version)} thiếu chức năng: {string.Join(", ", missing)}. Hãy deploy gateway v1.4.10 vào đúng deployment /exec đang dùng.");
     }
 
     public static async Task<ReportChangePage> PullReportChangesAsync(long afterSeq, int limit = 500, CancellationToken ct = default)

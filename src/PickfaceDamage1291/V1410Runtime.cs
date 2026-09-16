@@ -372,7 +372,7 @@ internal static class V1410Runtime
                     }
                     else if (!string.IsNullOrWhiteSpace(outcome.Error))
                     {
-                        var key = byId.TryGetValue(outcome.ReportId, out var report) ? report.Sku : outcome.ReportId;
+                        var key = byId.TryGetValue(outcome.ReportId, out var failedReport) ? failedReport.Sku : outcome.ReportId;
                         failures.Add($"{key}: {outcome.Error}");
                     }
                 }
