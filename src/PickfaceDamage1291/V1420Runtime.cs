@@ -1,3 +1,4 @@
+using System.Globalization;
 using DocumentFormat.OpenXml.Packaging;
 
 namespace PickfaceDamage1291;
@@ -10,7 +11,7 @@ internal static class V1420Runtime
         {
             PatchBbbgButton(main);
             main.Shown += (_, _) => PatchBbbgButton(main);
-            AppLog.Info("V1420_RUNTIME_APPLIED", "Đã áp dụng sửa xuất BBBG Inventory v1.4.20.");
+            AppLog.Info("V1420_RUNTIME_APPLIED", "Đã áp dụng sửa xuất BBBG Inventory v1.4.21.");
         }
         catch (Exception ex)
         {
@@ -70,24 +71,18 @@ internal static class V1420Runtime
                 Filter = "Word Document (*.docx)|*.docx",
                 DefaultExt = "docx",
                 AddExtension = true,
-                OverwritePrompt = true,
+                OverwritePrompt = false,
+                CreatePrompt = false,
+                CheckFileExists = false,
                 FileName = defaultName,
-                Title = "Lưu BBBG Inventory Pickface 1291"
+                Title = shifts.Count > 1
+                    ? "Chọn tên gốc/vị trí lưu - ứng dụng sẽ tạo riêng từng ca"
+                    : "Lưu BBBG Inventory Pickface 1291"
             };
             if (save.ShowDialog(main) != DialogResult.OK || string.IsNullOrWhiteSpace(save.FileName)) return;
 
-            var outputs = BuildOutputPaths(save.FileName, shifts);
-            var existing = outputs.Where(x => File.Exists(x.Path)).Select(x => Path.GetFileName(x.Path)).ToList();
-            if (existing.Count > 0)
-            {
-                var confirm = MessageBox.Show(
-                    main,
-                    "Các file sau đã tồn tại và sẽ được ghi đè:\n\n" + string.Join("\n", existing) + "\n\nTiếp tục?",
-                    "Xác nhận ghi đè BBBG Inventory",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
-                if (confirm != DialogResult.Yes) return;
-            }
+            var exportTime = DateTime.Now;
+            var outputs = BuildOutputPaths(save.FileName, shifts, exportTime);
 
             var exported = 0;
             var total = 0;
@@ -108,12 +103,14 @@ internal static class V1420Runtime
                 "Xuất BBBG Inventory",
                 MessageBoxIcon.Information);
 
-            AppLog.Info("EXPORT_BBBG_INVENTORY_V1420_DONE", "Đã tạo BBBG Inventory bằng hộp thoại lưu file.", new Dictionary<string, object?>
+            AppLog.Info("EXPORT_BBBG_INVENTORY_V1420_DONE", "Đã tạo BBBG Inventory; mỗi ca là một file riêng và không ghi đè file cũ.", new Dictionary<string, object?>
             {
                 ["entry_date"] = select.SelectedDate.ToString("yyyy-MM-dd"),
                 ["shifts"] = string.Join(",", shifts),
                 ["file_count"] = exported,
-                ["report_count"] = total
+                ["report_count"] = total,
+                ["export_time"] = exportTime.ToString("O", CultureInfo.InvariantCulture),
+                ["files"] = string.Join(" | ", outputs.Select(x => Path.GetFileName(x.Path)))
             });
         }
         catch (Exception ex)
@@ -127,10 +124,15 @@ internal static class V1420Runtime
         }
     }
 
-    private static List<(string Shift, string Path)> BuildOutputPaths(string selectedPath, IReadOnlyList<string> shifts)
+    private static List<(string Shift, string Path)> BuildOutputPaths(
+        string selectedPath,
+        IReadOnlyList<string> shifts,
+        DateTime exportTime)
     {
+        var timestamp = exportTime.ToString("HHmmss", CultureInfo.InvariantCulture);
+
         if (shifts.Count == 1)
-            return [(shifts[0], selectedPath)];
+            return [(shifts[0], EnsureUniquePath(selectedPath, timestamp))];
 
         var directory = Path.GetDirectoryName(selectedPath);
         if (string.IsNullOrWhiteSpace(directory)) directory = Environment.CurrentDirectory;
@@ -138,8 +140,34 @@ internal static class V1420Runtime
         if (string.IsNullOrWhiteSpace(stem)) stem = "BBBG Inventory Pickface 1291";
 
         return shifts
-            .Select(shift => (shift, Path.Combine(directory, $"{stem} - {shift}.docx")))
+            .Select(shift =>
+            {
+                var target = Path.Combine(directory, $"{stem} - {shift}.docx");
+                return (shift, EnsureUniquePath(target, timestamp));
+            })
             .ToList();
+    }
+
+    private static string EnsureUniquePath(string path, string timestamp)
+    {
+        if (!File.Exists(path)) return path;
+
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(directory)) directory = Environment.CurrentDirectory;
+        var stem = Path.GetFileNameWithoutExtension(path);
+        var extension = Path.GetExtension(path);
+        if (string.IsNullOrWhiteSpace(extension)) extension = ".docx";
+
+        var timestamped = Path.Combine(directory, $"{stem}_{timestamp}{extension}");
+        if (!File.Exists(timestamped)) return timestamped;
+
+        for (var i = 2; i < 10000; i++)
+        {
+            var candidate = Path.Combine(directory, $"{stem}_{timestamp}_{i}{extension}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+
+        throw new IOException("Không thể tạo tên file BBBG không trùng sau khi đã thêm hậu tố thời gian xuất.");
     }
 
     private static async Task<bool> EnsureFreshDataAsync(MainForm main, Label? status)
@@ -209,8 +237,8 @@ internal static class BbbgInventoryWordExporterV1420
                     throw new InvalidDataException("File Word BBBG tạo ra không có nội dung hợp lệ.");
             }
 
-            File.Move(tempPath, finalPath, true);
-            AppLog.Info("EXPORT_BBBG_INVENTORY_V1420_VERIFIED", "File Word BBBG đã được kiểm tra cấu trúc trước khi lưu.", new Dictionary<string, object?>
+            File.Move(tempPath, finalPath, false);
+            AppLog.Info("EXPORT_BBBG_INVENTORY_V1420_VERIFIED", "File Word BBBG đã được kiểm tra cấu trúc trước khi lưu và không ghi đè file cũ.", new Dictionary<string, object?>
             {
                 ["file_name"] = Path.GetFileName(finalPath),
                 ["report_count"] = reports.Count
