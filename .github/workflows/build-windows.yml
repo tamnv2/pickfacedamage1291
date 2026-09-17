@@ -8,6 +8,7 @@ on:
       - 'tools/BbbgTemplateProbe/**'
       - 'tools/ExportCompatibilityProbe/**'
       - 'tools/verify-owner-logo.ps1'
+      - 'tools/verify-v1428-regressions.ps1'
       - '.github/workflows/build-windows.yml'
   pull_request:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - 'tools/BbbgTemplateProbe/**'
       - 'tools/ExportCompatibilityProbe/**'
       - 'tools/verify-owner-logo.ps1'
+      - 'tools/verify-v1428-regressions.ps1'
       - '.github/workflows/build-windows.yml'
   workflow_dispatch:
 
@@ -37,6 +39,10 @@ jobs:
       - name: Verify exact OWNER logo
         shell: pwsh
         run: ./tools/verify-owner-logo.ps1
+
+      - name: Verify v1.4.28 regressions
+        shell: pwsh
+        run: ./tools/verify-v1428-regressions.ps1
 
       - name: Probe approved BBBG template
         shell: pwsh
