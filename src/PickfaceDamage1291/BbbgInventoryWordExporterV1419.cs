@@ -26,29 +26,67 @@ internal static class BbbgInventoryWordExporterV1419
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
 
-        CopyApprovedTemplate(path);
+        byte[] outputBytes;
+        var templateBytes = ReadApprovedTemplateBytes();
 
-        WordprocessingDocument? document = null;
         try
         {
-            document = OpenTemplateWithRepair(path);
+            outputBytes = PopulateTemplateInMemory(templateBytes, reports);
         }
-        catch (Exception ex) when (ex is FileFormatException or InvalidDataException)
+        catch (Exception first) when (first is FileFormatException or InvalidDataException)
         {
             AppLog.Warning(
-                "EXPORT_BBBG_TEMPLATE_FALLBACK",
-                "Template BBBG không mở được sau khi thử sửa package; tạo DOCX sạch để bảo đảm xuất dữ liệu không bị gián đoạn.",
+                "EXPORT_BBBG_TEMPLATE_PACKAGE_REPAIR",
+                "OpenXML không mở được template trực tiếp; thử đóng gói lại DOCX hoàn toàn trong RAM.",
                 new Dictionary<string, object?>
                 {
-                    ["exception_type"] = ex.GetType().FullName,
-                    ["exception_message"] = ex.Message,
-                    ["report_count"] = reports.Count
+                    ["exception_type"] = first.GetType().FullName,
+                    ["message"] = first.Message
                 });
-            CreateFallbackDocument(path, reports);
-            return;
+
+            try
+            {
+                var repairedBytes = RepairZipPackageInMemory(templateBytes);
+                outputBytes = PopulateTemplateInMemory(repairedBytes, reports);
+            }
+            catch (Exception repairEx) when (repairEx is InvalidDataException or IOException or FileFormatException)
+            {
+                AppLog.Warning(
+                    "EXPORT_BBBG_TEMPLATE_FALLBACK",
+                    "Template BBBG không dùng được sau khi sửa package; tạo DOCX sạch hoàn toàn trong RAM.",
+                    new Dictionary<string, object?>
+                    {
+                        ["first_exception_type"] = first.GetType().FullName,
+                        ["first_exception_message"] = first.Message,
+                        ["repair_exception_type"] = repairEx.GetType().FullName,
+                        ["repair_exception_message"] = repairEx.Message,
+                        ["report_count"] = reports.Count
+                    });
+
+                outputBytes = CreateFallbackDocumentBytes(reports);
+            }
         }
 
-        using (document)
+        File.WriteAllBytes(path, outputBytes);
+
+        AppLog.Info(
+            "EXPORT_BBBG_INVENTORY_V1419_WORD_DONE",
+            "Đã tạo Word BBBG Inventory; OpenXML xử lý trong RAM và chỉ ghi file hoàn chỉnh một lần.",
+            new Dictionary<string, object?>
+            {
+                ["report_count"] = reports.Count,
+                ["output_bytes"] = outputBytes.Length,
+                ["shift_in_document"] = false
+            });
+    }
+
+    private static byte[] PopulateTemplateInMemory(byte[] templateBytes, IReadOnlyList<DamageReport> reports)
+    {
+        using var memory = new MemoryStream(Math.Max(templateBytes.Length + 64 * 1024, 128 * 1024));
+        memory.Write(templateBytes, 0, templateBytes.Length);
+        memory.Position = 0;
+
+        using (var document = WordprocessingDocument.Open(memory, true))
         {
             var main = document.MainDocumentPart
                        ?? throw new InvalidDataException("Template BBBG không có MainDocumentPart.");
@@ -85,129 +123,100 @@ internal static class BbbgInventoryWordExporterV1419
             main.Document.Save();
         }
 
-        AppLog.Info("EXPORT_BBBG_INVENTORY_V1419_WORD_DONE", "Đã tạo Word BBBG Inventory theo template V2 đã duyệt.",
-            new Dictionary<string, object?>
-            {
-                ["report_count"] = reports.Count,
-                ["template"] = "V2_SIZE10",
-                ["shift_in_document"] = false
-            });
+        return memory.ToArray();
     }
 
-    private static WordprocessingDocument OpenTemplateWithRepair(string path)
+    private static byte[] RepairZipPackageInMemory(byte[] sourceBytes)
     {
-        try
-        {
-            return WordprocessingDocument.Open(path, true);
-        }
-        catch (FileFormatException first)
-        {
-            AppLog.Warning(
-                "EXPORT_BBBG_TEMPLATE_PACKAGE_REPAIR",
-                "OpenXML báo package template bị hỏng; thử đóng gói lại DOCX trước khi xuất.",
-                new Dictionary<string, object?> { ["message"] = first.Message });
+        using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+        using var source = new ZipArchive(sourceStream, ZipArchiveMode.Read, leaveOpen: false);
+        using var targetStream = new MemoryStream(Math.Max(sourceBytes.Length + 4096, 16 * 1024));
 
-            try
+        using (var target = new ZipArchive(targetStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var entry in source.Entries)
             {
-                RepairZipPackage(path);
-                return WordprocessingDocument.Open(path, true);
-            }
-            catch (Exception repairEx) when (repairEx is InvalidDataException or IOException or FileFormatException)
-            {
-                throw new InvalidDataException(
-                    "Template BBBG bị lỗi package và không thể tự sửa.",
-                    new AggregateException(first, repairEx));
+                var targetEntry = target.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+                if (entry.FullName.EndsWith("/", StringComparison.Ordinal)) continue;
+
+                using var input = entry.Open();
+                using var output = targetEntry.Open();
+                input.CopyTo(output);
             }
         }
+
+        return targetStream.ToArray();
     }
 
-    private static void RepairZipPackage(string path)
+    private static byte[] CreateFallbackDocumentBytes(IReadOnlyList<DamageReport> reports)
     {
-        var directory = Path.GetDirectoryName(path);
-        if (string.IsNullOrWhiteSpace(directory)) directory = Environment.CurrentDirectory;
-        var repairedPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.repaired");
+        using var memory = new MemoryStream(128 * 1024);
 
-        try
+        using (var document = WordprocessingDocument.Create(memory, WordprocessingDocumentType.Document, true))
         {
-            using (var sourceStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (var source = new ZipArchive(sourceStream, ZipArchiveMode.Read, leaveOpen: false))
-            using (var targetStream = new FileStream(repairedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            using (var target = new ZipArchive(targetStream, ZipArchiveMode.Create, leaveOpen: false))
-            {
-                foreach (var entry in source.Entries)
-                {
-                    var targetEntry = target.CreateEntry(entry.FullName, CompressionLevel.Optimal);
-                    if (entry.FullName.EndsWith("/", StringComparison.Ordinal)) continue;
-                    using var input = entry.Open();
-                    using var output = targetEntry.Open();
-                    input.CopyTo(output);
-                }
-            }
+            var main = document.AddMainDocumentPart();
+            main.Document = new Document();
+            var body = new Body();
+            main.Document.Append(body);
 
-            File.Move(repairedPath, path, true);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(repairedPath)) File.Delete(repairedPath);
-            }
-            catch { }
-        }
-    }
+            body.Append(CreateParagraph("BBBG INVENTORY PICKFACE 1291", bold: true, centered: true, fontSizeHalfPoints: "24"));
+            body.Append(CreateParagraph(string.Empty, bold: false, centered: false, fontSizeHalfPoints: "20"));
 
-    private static void CreateFallbackDocument(string path, IReadOnlyList<DamageReport> reports)
-    {
-        if (File.Exists(path)) File.Delete(path);
+            var table = new Table();
+            table.AppendChild(new TableProperties(
+                new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
+                new TableBorders(
+                    new TopBorder { Val = BorderValues.Single, Size = 4U },
+                    new LeftBorder { Val = BorderValues.Single, Size = 4U },
+                    new BottomBorder { Val = BorderValues.Single, Size = 4U },
+                    new RightBorder { Val = BorderValues.Single, Size = 4U },
+                    new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4U },
+                    new InsideVerticalBorder { Val = BorderValues.Single, Size = 4U })));
 
-        using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
-        var main = document.AddMainDocumentPart();
-        main.Document = new Document();
-        var body = new Body();
-        main.Document.Append(body);
-
-        body.Append(CreateParagraph("BBBG INVENTORY PICKFACE 1291", bold: true, centered: true, fontSizeHalfPoints: "24"));
-        body.Append(CreateParagraph(string.Empty, bold: false, centered: false, fontSizeHalfPoints: "20"));
-
-        var table = new Table();
-        table.AppendChild(new TableProperties(
-            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
-            new TableBorders(
-                new TopBorder { Val = BorderValues.Single, Size = 4U },
-                new LeftBorder { Val = BorderValues.Single, Size = 4U },
-                new BottomBorder { Val = BorderValues.Single, Size = 4U },
-                new RightBorder { Val = BorderValues.Single, Size = 4U },
-                new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4U },
-                new InsideVerticalBorder { Val = BorderValues.Single, Size = 4U })));
-
-        table.Append(CreateFallbackRow(new[]
-        {
-            "STT", "SKU", "TÊN SẢN PHẨM", "VỊ TRÍ", "SỐ LƯỢNG", "THỜI GIAN PHÁT HIỆN"
-        }, header: true));
-
-        for (var i = 0; i < reports.Count; i++)
-        {
-            var report = reports[i];
             table.Append(CreateFallbackRow(new[]
             {
-                (i + 1).ToString(CultureInfo.InvariantCulture),
-                report.Sku ?? string.Empty,
-                report.ProductName ?? string.Empty,
-                report.Location ?? string.Empty,
-                $"{FormatQuantity(report.Quantity)} - {report.BaseUnit?.Trim()}".TrimEnd(' ', '-'),
-                DetectionTime(report).ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)
-            }, header: false));
+                "STT", "SKU", "TÊN SẢN PHẨM", "VỊ TRÍ", "SỐ LƯỢNG", "THỜI GIAN PHÁT HIỆN"
+            }, header: true));
+
+            for (var i = 0; i < reports.Count; i++)
+            {
+                var report = reports[i];
+                table.Append(CreateFallbackRow(new[]
+                {
+                    (i + 1).ToString(CultureInfo.InvariantCulture),
+                    report.Sku ?? string.Empty,
+                    report.ProductName ?? string.Empty,
+                    report.Location ?? string.Empty,
+                    $"{FormatQuantity(report.Quantity)} - {report.BaseUnit?.Trim()}".TrimEnd(' ', '-'),
+                    DetectionTime(report).ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)
+                }, header: false));
+            }
+
+            body.Append(table);
+            main.Document.Save();
         }
 
-        body.Append(table);
-        main.Document.Save();
-
-        AppLog.Info("EXPORT_BBBG_FALLBACK_WORD_DONE", "Đã tạo DOCX sạch thay thế do template package lỗi.",
+        var bytes = memory.ToArray();
+        AppLog.Info(
+            "EXPORT_BBBG_FALLBACK_WORD_DONE",
+            "Đã tạo DOCX sạch thay thế hoàn toàn trong RAM do template package lỗi.",
             new Dictionary<string, object?>
             {
                 ["report_count"] = reports.Count,
-                ["columns"] = 6
+                ["columns"] = 6,
+                ["output_bytes"] = bytes.Length
             });
+        return bytes;
+    }
+
+    private static byte[] ReadApprovedTemplateBytes()
+    {
+        var assembly = typeof(BbbgInventoryWordExporterV1419).Assembly;
+        using var source = assembly.GetManifestResourceStream(TemplateResourceName)
+                           ?? throw new FileNotFoundException($"Không tìm thấy template nhúng: {TemplateResourceName}");
+        using var memory = new MemoryStream();
+        source.CopyTo(memory);
+        return memory.ToArray();
     }
 
     private static TableRow CreateFallbackRow(IReadOnlyList<string> values, bool header)
@@ -237,15 +246,6 @@ internal static class BbbgInventoryWordExporterV1419
 
         var run = new Run(runProperties, new Text(value ?? string.Empty) { Space = SpaceProcessingModeValues.Preserve });
         return new Paragraph(paragraphProperties, run);
-    }
-
-    private static void CopyApprovedTemplate(string path)
-    {
-        var assembly = typeof(BbbgInventoryWordExporterV1419).Assembly;
-        using var source = assembly.GetManifestResourceStream(TemplateResourceName)
-                           ?? throw new FileNotFoundException($"Không tìm thấy template nhúng: {TemplateResourceName}");
-        using var target = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
-        source.CopyTo(target);
     }
 
     private static Table? FindDataTable(Body body)
