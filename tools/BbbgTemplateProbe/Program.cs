@@ -5,10 +5,15 @@ using System.Text;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 
-if (args.Length != 1) throw new ArgumentException("Usage: BbbgTemplateProbe <template.docx>");
-var path = Path.GetFullPath(args[0]);
-var bytes = File.ReadAllBytes(path);
-Console.WriteLine($"TEMPLATE_PATH={path}");
+if (args.Length != 1) throw new ArgumentException("Usage: BbbgTemplateProbe <template.docx|template-source.cs>");
+var inputPath = Path.GetFullPath(args[0]);
+var bytes = ReadTemplateBytes(inputPath);
+var workDir = Path.Combine(Path.GetTempPath(), "pickface-bbbg-probe-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(workDir);
+var path = Path.Combine(workDir, "template.docx");
+File.WriteAllBytes(path, bytes);
+
+Console.WriteLine($"TEMPLATE_SOURCE={inputPath}");
 Console.WriteLine($"TEMPLATE_BYTES={bytes.Length}");
 Console.WriteLine($"TEMPLATE_SHA256={Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}");
 Console.WriteLine($"HEAD={Convert.ToHexString(bytes.Take(Math.Min(32, bytes.Length)).ToArray())}");
@@ -24,7 +29,7 @@ catch (Exception ex)
 {
     Console.WriteLine($"ZIP_OPEN=FAILED|{ex.GetType().Name}|{ex.Message}");
     var repaired = SalvageLocalEntries(bytes);
-    openPath = Path.Combine(Path.GetDirectoryName(path)!, "MAU_BBBG_INVENTORY_PICKFACE_TEMPLATE_V2_SIZE10.repaired.docx");
+    openPath = Path.Combine(workDir, "template.repaired.docx");
     File.WriteAllBytes(openPath, repaired);
     Console.WriteLine($"SALVAGE_BYTES={repaired.Length}");
     Console.WriteLine($"SALVAGE_SHA256={Convert.ToHexString(SHA256.HashData(repaired)).ToLowerInvariant()}");
@@ -47,6 +52,19 @@ Console.WriteLine($"TABLE_COUNT={body.Elements<Table>().Count()}");
 Console.WriteLine($"IMAGE_PART_COUNT={main.ImageParts.Count()}");
 Console.WriteLine($"HEADER_COUNT={main.HeaderParts.Count()}");
 Console.WriteLine($"FOOTER_COUNT={main.FooterParts.Count()}");
+
+var dataTable = body.Elements<Table>().FirstOrDefault(table =>
+{
+    var first = table.Elements<TableRow>().FirstOrDefault();
+    var cells = first?.Elements<TableCell>().ToList();
+    return cells?.Count == 6 &&
+           string.Equals(cells[0].InnerText.Trim(), "STT", StringComparison.OrdinalIgnoreCase) &&
+           string.Equals(cells[1].InnerText.Trim(), "SKU", StringComparison.OrdinalIgnoreCase);
+});
+if (dataTable is null) throw new InvalidDataException("Canonical BBBG template has no 6-column STT/SKU data table.");
+if (dataTable.Elements<TableRow>().Count() < 2) throw new InvalidDataException("Canonical BBBG template has no prototype row.");
+if (main.ImageParts.Count() < 1) throw new InvalidDataException("Canonical BBBG template is missing THE SUPRA logo image.");
+
 foreach (var table in body.Elements<Table>())
 {
     var rowCount = table.Elements<TableRow>().Count();
@@ -54,6 +72,21 @@ foreach (var table in body.Elements<Table>())
     Console.WriteLine($"TABLE|ROWS={rowCount}|FIRST={string.Join(" || ", firstCells)}");
 }
 Console.WriteLine("PROBE_PASS=TRUE");
+
+static byte[] ReadTemplateBytes(string path)
+{
+    if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) return File.ReadAllBytes(path);
+
+    var source = File.ReadAllText(path, Encoding.UTF8);
+    const string marker = "private const string Base64 = \"\"\"";
+    var start = source.IndexOf(marker, StringComparison.Ordinal);
+    if (start < 0) throw new InvalidDataException("Template source Base64 marker not found.");
+    start += marker.Length;
+    var end = source.IndexOf("\"\"\";", start, StringComparison.Ordinal);
+    if (end < 0) throw new InvalidDataException("Template source Base64 terminator not found.");
+    var base64 = source[start..end];
+    return Convert.FromBase64String(base64);
+}
 
 static byte[] SalvageLocalEntries(byte[] source)
 {
@@ -80,8 +113,7 @@ static byte[] SalvageLocalEntries(byte[] source)
         if (dataEnd > source.Length)
             throw new InvalidDataException($"Entry at {offset} is truncated: data end {dataEnd} > {source.Length}.");
 
-        var nameBytes = source.AsSpan(nameStart, nameLength).ToArray();
-        var name = Encoding.UTF8.GetString(nameBytes);
+        var name = Encoding.UTF8.GetString(source.AsSpan(nameStart, nameLength));
         var compressed = source.AsSpan(dataStart, (int)compressedSize).ToArray();
         byte[] data;
         if (method == 0)
@@ -113,7 +145,6 @@ static byte[] SalvageLocalEntries(byte[] source)
     if (!entries.Any(x => x.Name == "[Content_Types].xml") || !entries.Any(x => x.Name == "word/document.xml"))
         throw new InvalidDataException("Recovered package is missing required DOCX entries.");
 
-    Console.WriteLine($"SALVAGED_ENTRY_COUNT={entries.Count}|TRAILING_BYTES={source.Length - offset}");
     using var targetStream = new MemoryStream(Math.Max(source.Length + 4096, 16 * 1024));
     using (var target = new ZipArchive(targetStream, ZipArchiveMode.Create, leaveOpen: true))
     {
