@@ -7,6 +7,7 @@ on:
       - 'src/**'
       - 'tools/ExportCompatibilityProbe/**'
       - 'tools/verify-owner-logo.ps1'
+      - 'tools/verify-v1428-regressions.ps1'
       - '.github/workflows/release-windows.yml'
   workflow_dispatch:
 
@@ -29,6 +30,10 @@ jobs:
       - name: Verify exact OWNER logo
         shell: pwsh
         run: ./tools/verify-owner-logo.ps1
+
+      - name: Verify v1.4.28 regressions
+        shell: pwsh
+        run: ./tools/verify-v1428-regressions.ps1
 
       - name: Probe Excel export compatibility
         run: dotnet run --project tools/ExportCompatibilityProbe/ExportCompatibilityProbe.csproj -c Release
