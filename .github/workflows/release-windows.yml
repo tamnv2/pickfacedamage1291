@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'tools/verify-owner-logo.ps1'
       - '.github/workflows/release-windows.yml'
   workflow_dispatch:
 
@@ -24,6 +25,10 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+
+      - name: Verify exact OWNER logo
+        shell: pwsh
+        run: ./tools/verify-owner-logo.ps1
 
       - name: Read application version
         id: version
