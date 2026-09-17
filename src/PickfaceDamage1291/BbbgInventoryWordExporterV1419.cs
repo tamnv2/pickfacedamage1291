@@ -1,7 +1,10 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using A = DocumentFormat.OpenXml.Drawing;
+using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 
 namespace PickfaceDamage1291;
 
@@ -22,20 +25,22 @@ internal static class BbbgInventoryWordExporterV1419
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
 
-        // V1.4.24: there is exactly one approved V2 layout. Never substitute a generic fallback.
-        // The canonical DOCX is stored as Base64 source to prevent repository binary truncation.
+        // V1.4.25: one approved V2 layout + exact OWNER-provided THE SUPRA logo.
+        // Do not redesign, regenerate, substitute, or fall back to another logo/template.
         var templateBytes = BbbgInventoryTemplateV1424.GetBytes();
         var outputBytes = PopulateTemplateInMemory(templateBytes, reports);
         File.WriteAllBytes(path, outputBytes);
 
         AppLog.Info(
-            "EXPORT_BBBG_INVENTORY_V1424_WORD_DONE",
-            "Đã tạo Word BBBG Inventory đúng mẫu V2 canonical; không cho phép fallback sang mẫu khác.",
+            "EXPORT_BBBG_INVENTORY_V1425_WORD_DONE",
+            "Đã tạo Word BBBG Inventory đúng mẫu V2 canonical và đúng logo THE SUPRA do OWNER cung cấp.",
             new Dictionary<string, object?>
             {
                 ["report_count"] = reports.Count,
                 ["output_bytes"] = outputBytes.Length,
                 ["template"] = "V2_CANONICAL_V1424",
+                ["logo"] = "OWNER_THE_SUPRA_V1425",
+                ["logo_sha256"] = BbbgOfficialLogoV1425.Sha256,
                 ["shift_in_document"] = false
             });
     }
@@ -52,6 +57,9 @@ internal static class BbbgInventoryWordExporterV1419
                        ?? throw new InvalidDataException("Mẫu BBBG V2 không có MainDocumentPart.");
             var body = main.Document.Body
                        ?? throw new InvalidDataException("Mẫu BBBG V2 không có nội dung Body.");
+
+            ReplaceLogoWithOwnerSuppliedPng(main);
+
             var table = FindDataTable(body)
                         ?? throw new InvalidDataException("Không tìm thấy bảng dữ liệu BBBG 6 cột trong mẫu V2.");
 
@@ -84,6 +92,44 @@ internal static class BbbgInventoryWordExporterV1419
         }
 
         return memory.ToArray();
+    }
+
+    private static void ReplaceLogoWithOwnerSuppliedPng(MainDocumentPart main)
+    {
+        var logoBytes = BbbgOfficialLogoV1425.GetBytes();
+        var actualHash = Convert.ToHexString(SHA256.HashData(logoBytes)).ToLowerInvariant();
+        if (!string.Equals(actualHash, BbbgOfficialLogoV1425.Sha256, StringComparison.Ordinal))
+            throw new InvalidDataException("Logo THE SUPRA nhúng trong phần mềm không khớp file OWNER đã cung cấp.");
+
+        var blip = main.Document
+            .Descendants<A.Blip>()
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.Embed?.Value))
+            ?? throw new InvalidDataException("Mẫu BBBG V2 không có vị trí ảnh logo.");
+
+        var relationshipId = blip.Embed!.Value!;
+        if (main.GetPartById(relationshipId) is not ImagePart imagePart)
+            throw new InvalidDataException("Quan hệ ảnh logo trong mẫu BBBG V2 không hợp lệ.");
+
+        using (var logoStream = new MemoryStream(logoBytes, writable: false))
+        {
+            imagePart.FeedData(logoStream);
+        }
+
+        // Preserve the official PNG's 160:171 proportions instead of stretching it to the old placeholder ratio.
+        var drawing = blip.Ancestors<Drawing>().FirstOrDefault();
+        var outerExtent = drawing?.Descendants<DW.Extent>().FirstOrDefault();
+        if (drawing is not null && outerExtent?.Cy?.Value is long currentCy && currentCy > 0)
+        {
+            var currentCx = Math.Max(1L,
+                (long)Math.Round(currentCy * (double)BbbgOfficialLogoV1425.PixelWidth / BbbgOfficialLogoV1425.PixelHeight));
+            outerExtent.Cx = currentCx;
+
+            foreach (var innerExtent in drawing.Descendants<A.Extents>())
+            {
+                innerExtent.Cx = currentCx;
+                innerExtent.Cy = currentCy;
+            }
+        }
     }
 
     private static Table? FindDataTable(Body body)
