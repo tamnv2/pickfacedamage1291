@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
 
+# Explicit publish retry after canonical BBBG V2 validation passed.
 jobs:
   release:
     if: github.repository == 'tamnv2/pickfacedamage1291'
