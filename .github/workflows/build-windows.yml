@@ -33,7 +33,7 @@ jobs:
       - name: Probe approved BBBG template
         shell: pwsh
         run: |
-          dotnet run --project tools/BbbgTemplateProbe/BbbgTemplateProbe.csproj -- "src/PickfaceDamage1291/Assets/MAU_BBBG_INVENTORY_PICKFACE_TEMPLATE_V2_SIZE10.docx"
+          dotnet run --project tools/BbbgTemplateProbe/BbbgTemplateProbe.csproj -- "src/PickfaceDamage1291/BbbgInventoryTemplateV1424.cs"
 
       - name: Restore
         run: dotnet restore src/PickfaceDamage1291/PickfaceDamage1291.csproj
