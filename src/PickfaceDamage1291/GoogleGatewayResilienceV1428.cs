@@ -43,6 +43,10 @@ internal static class GoogleGatewayResilienceV1428
     {
         if (string.Equals(action, "get_image", StringComparison.OrdinalIgnoreCase))
             return TimeSpan.FromSeconds(30);
+        if (string.Equals(action, "login_by_username", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(action, "password_reset_by_username", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(action, "sync_login_aliases", StringComparison.OrdinalIgnoreCase))
+            return TimeSpan.FromSeconds(30);
         if (string.Equals(action, "pull_changes", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(action, "pull_products", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(action, "list_audit", StringComparison.OrdinalIgnoreCase))
