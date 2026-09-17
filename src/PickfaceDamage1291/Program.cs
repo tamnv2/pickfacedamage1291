@@ -7,6 +7,7 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        var startup = Stopwatch.StartNew();
         ApplicationConfiguration.Initialize();
         try
         {
@@ -40,6 +41,10 @@ internal static class Program
         }
 
         RuntimeConfigService.InitializeAsync().GetAwaiter().GetResult();
+        AppLog.Info("STARTUP_LOCAL_READY", "Khởi tạo local và tuyến mạng cơ bản đã sẵn sàng.", new Dictionary<string, object?>
+        {
+            ["elapsed_ms"] = startup.ElapsedMilliseconds
+        });
 
         while (true)
         {
@@ -63,7 +68,8 @@ internal static class Program
                 {
                     ["username"] = active.Profile.Username,
                     ["role"] = active.Profile.Role,
-                    ["offline"] = active.OfflineMode
+                    ["offline"] = active.OfflineMode,
+                    ["startup_elapsed_ms"] = startup.ElapsedMilliseconds
                 });
             }
 
@@ -86,6 +92,7 @@ internal static class Program
             V1419Runtime.Apply(main);
             V1420Runtime.Apply(main);
             V1427Runtime.Apply(main);
+            V1428Runtime.Apply(main);
             Application.Run(main);
 
             var storageMoveTarget = V132Runtime.ConsumeStorageMoveTarget();
@@ -163,15 +170,32 @@ internal static class Program
 
     private static void CleanupSession(MainForm main, string reason)
     {
+        var cleanup = Stopwatch.StartNew();
         var session = AppSession.Current;
         var manager = AppSession.OperatorManager;
         try
         {
             if (manager is not null && session?.OfflineMode != true)
-                manager.ReleaseAsync(normalLogout: true).GetAwaiter().GetResult();
+            {
+                manager.ReleaseAsync(normalLogout: false).GetAwaiter().GetResult();
+                if (session is not null)
+                {
+                    try
+                    {
+                        DurableAuditQueue.Enqueue(session, "OPERATOR_RELEASED", new { session = manager.SessionId }, manager.SessionId);
+                    }
+                    catch { }
+                }
+            }
 
             if (session is not null)
-                FirebaseClient.AppendAuditAsync(session, "LOGOUT", new { reason }).GetAwaiter().GetResult();
+            {
+                try
+                {
+                    DurableAuditQueue.Enqueue(session, "LOGOUT", new { reason });
+                }
+                catch { }
+            }
         }
         catch (Exception ex)
         {
@@ -179,7 +203,12 @@ internal static class Program
         }
         finally
         {
-            AppLog.Info("SESSION_CLOSED", "Đã đóng phiên ứng dụng.", new Dictionary<string, object?> { ["reason"] = reason });
+            AppLog.Info("SESSION_CLOSED", "Đã đóng phiên ứng dụng.", new Dictionary<string, object?>
+            {
+                ["reason"] = reason,
+                ["elapsed_ms"] = cleanup.ElapsedMilliseconds,
+                ["remote_logout_audit_wait"] = false
+            });
             if (manager is not null)
             {
                 try { manager.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
