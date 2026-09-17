@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'tools/ExportCompatibilityProbe/**'
       - 'tools/verify-owner-logo.ps1'
       - '.github/workflows/release-windows.yml'
   workflow_dispatch:
@@ -12,7 +13,6 @@ on:
 permissions:
   contents: write
 
-# Explicit publish retry after canonical BBBG V2 validation passed.
 jobs:
   release:
     if: github.repository == 'tamnv2/pickfacedamage1291'
@@ -29,6 +29,9 @@ jobs:
       - name: Verify exact OWNER logo
         shell: pwsh
         run: ./tools/verify-owner-logo.ps1
+
+      - name: Probe Excel export compatibility
+        run: dotnet run --project tools/ExportCompatibilityProbe/ExportCompatibilityProbe.csproj -c Release
 
       - name: Read application version
         id: version
