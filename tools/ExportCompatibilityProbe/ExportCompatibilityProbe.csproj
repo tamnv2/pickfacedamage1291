@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/PickfaceDamage1291/PickfaceDamage1291.csproj" />
+    <PackageReference Include="ClosedXML" Version="0.102.2" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
   </ItemGroup>
 </Project>
