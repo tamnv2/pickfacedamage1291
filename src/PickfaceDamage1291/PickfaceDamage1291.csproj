@@ -11,17 +11,17 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <Version>1.4.26</Version>
-    <InformationalVersion>1.4.26</InformationalVersion>
-    <AssemblyVersion>1.4.26.0</AssemblyVersion>
-    <FileVersion>1.4.26.0</FileVersion>
+    <Version>1.4.27</Version>
+    <InformationalVersion>1.4.27</InformationalVersion>
+    <AssemblyVersion>1.4.27.0</AssemblyVersion>
+    <FileVersion>1.4.27.0</FileVersion>
     <Description>PICKFACE DAMAGE 1291 Windows portable</Description>
     <ApplicationIcon>Assets\PickfaceDamage1291.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="MainForm.cs;MainFormV2.cs;AdminUsersControl.cs;GoogleService.cs;VersionUpdateService.cs;UiRuntimeFixes.cs" />
     <PackageReference Include="ClosedXML" Version="0.102.2" />
-    <PackageReference Include="DocumentFormat.OpenXml" Version="3.0.2" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
