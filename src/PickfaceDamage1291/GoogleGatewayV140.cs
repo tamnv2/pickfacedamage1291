@@ -250,49 +250,8 @@ internal static class GoogleGatewayV140
             throw new InvalidOperationException("Drive chưa xác nhận file log đã được lưu.");
     }
 
-    private static async Task<JsonElement> CallReadAfterNetworkChangeAsync(string action, object payload, CancellationToken ct)
-    {
-        if (!NetworkHttpClientFactory.NetworkChangedRecently(TimeSpan.FromSeconds(45)))
-            return await CallAsync(action, payload, ct);
-
-        Exception? last = null;
-        var delays = new[] { 0, 1200, 3000 };
-        for (var attempt = 0; attempt < delays.Length; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (delays[attempt] > 0) await Task.Delay(delays[attempt], ct);
-            try
-            {
-                return await CallAsync(action, payload, ct);
-            }
-            catch (HttpRequestException ex) when (attempt + 1 < delays.Length)
-            {
-                last = ex;
-            }
-            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested && attempt + 1 < delays.Length)
-            {
-                last = ex;
-            }
-            catch (InvalidOperationException ex) when (
-                attempt + 1 < delays.Length &&
-                ex.Message.Contains("Gateway Google lỗi HTTP 404", StringComparison.OrdinalIgnoreCase))
-            {
-                last = ex;
-            }
-
-            if (last is not null)
-            {
-                AppLog.Warning("GATEWAY_READ_RETRY_AFTER_NETWORK_CHANGE", last.Message,
-                    new Dictionary<string, object?>
-                    {
-                        ["action"] = action,
-                        ["attempt"] = attempt + 1
-                    });
-            }
-        }
-
-        throw last ?? new HttpRequestException("Không đọc được dữ liệu Google sau khi đổi mạng.");
-    }
+    private static Task<JsonElement> CallReadAfterNetworkChangeAsync(string action, object payload, CancellationToken ct)
+        => CallAsync(action, payload, ct);
 
     private static async Task<JsonElement> CallAsync(string action, object payload, CancellationToken ct)
     {
@@ -302,6 +261,7 @@ internal static class GoogleGatewayV140
             ["action"] = action
         });
 
+        Exception? last = null;
         try
         {
             var session = AppSession.Current ?? throw new InvalidOperationException("Chưa đăng nhập ứng dụng.");
@@ -311,43 +271,129 @@ internal static class GoogleGatewayV140
 
             await FirebaseClient.EnsureFreshAsync(session, ct);
             var body = JsonSerializer.Serialize(new { action, id_token = session.IdToken, payload });
-            using var request = new HttpRequestMessage(HttpMethod.Post, RuntimeConfigService.GoogleGatewayUrl)
+            var attempts = GoogleGatewayResilienceV1428.ShouldRetry(action) ? 3 : 1;
+
+            for (var attempt = 1; attempt <= attempts; attempt++)
             {
-                Content = new StringContent(body, Encoding.UTF8, "application/json")
-            };
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct);
-            var text = await response.Content.ReadAsStringAsync(ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                AppLog.Warning("GATEWAY_HTTP_ERROR", "Google gateway trả HTTP không thành công.", new Dictionary<string, object?>
+                ct.ThrowIfCancellationRequested();
+                if (attempt > 1)
+                    await Task.Delay(GoogleGatewayResilienceV1428.RetryDelay(attempt - 1), ct);
+
+                try
                 {
-                    ["action"] = action,
-                    ["http_status"] = (int)response.StatusCode,
-                    ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
-                });
-                throw new InvalidOperationException($"Gateway Google lỗi HTTP {(int)response.StatusCode}.");
+                    await GoogleGatewayResilienceV1428.TransportGate.WaitAsync(ct);
+                    try
+                    {
+                        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        if (GoogleGatewayResilienceV1428.ShouldRetry(action))
+                            linked.CancelAfter(GoogleGatewayResilienceV1428.AttemptTimeout(action));
+
+                        using var request = new HttpRequestMessage(HttpMethod.Post, RuntimeConfigService.GoogleGatewayUrl)
+                        {
+                            Content = new StringContent(body, Encoding.UTF8, "application/json")
+                        };
+                        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
+                        request.Headers.TryAddWithoutValidation("Pragma", "no-cache");
+
+                        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseContentRead, linked.Token);
+                        var text = await response.Content.ReadAsStringAsync(linked.Token);
+                        var mediaType = response.Content.Headers.ContentType?.MediaType;
+
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            AppLog.Warning("GATEWAY_HTTP_ERROR", "Google gateway trả HTTP không thành công.", new Dictionary<string, object?>
+                            {
+                                ["action"] = action,
+                                ["http_status"] = (int)response.StatusCode,
+                                ["attempt"] = attempt,
+                                ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+                            });
+
+                            if (GoogleGatewayResilienceV1428.ShouldRetry(action) && GoogleGatewayResilienceV1428.IsTransientHttpStatus(response.StatusCode))
+                                throw new HttpRequestException($"Gateway Google tạm thời lỗi HTTP {(int)response.StatusCode}.");
+                            throw new InvalidOperationException($"Gateway Google lỗi HTTP {(int)response.StatusCode}.");
+                        }
+
+                        if (GoogleGatewayResilienceV1428.LooksLikeHtmlOrInvalidEnvelope(text, mediaType))
+                        {
+                            AppLog.Warning("GATEWAY_NON_JSON_RESPONSE", "Google gateway trả HTML/nội dung không phải JSON.", new Dictionary<string, object?>
+                            {
+                                ["action"] = action,
+                                ["attempt"] = attempt,
+                                ["content_type"] = mediaType ?? string.Empty,
+                                ["response_length"] = text.Length,
+                                ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+                            });
+                            if (GoogleGatewayResilienceV1428.ShouldRetry(action))
+                                throw new HttpRequestException("Google Gateway trả trang HTML tạm thời thay vì JSON.");
+                            throw new InvalidOperationException("Google trả dữ liệu không hợp lệ.");
+                        }
+
+                        JsonDocument doc;
+                        try
+                        {
+                            doc = JsonDocument.Parse(text);
+                        }
+                        catch (JsonException ex)
+                        {
+                            if (GoogleGatewayResilienceV1428.ShouldRetry(action))
+                                throw new HttpRequestException("Google Gateway trả JSON không hoàn chỉnh.", ex);
+                            throw new InvalidOperationException("Google trả dữ liệu không hợp lệ.", ex);
+                        }
+
+                        using (doc)
+                        {
+                            var root = doc.RootElement;
+                            var ok = root.TryGetProperty("ok", out var okNode) && okNode.ValueKind == JsonValueKind.True;
+                            if (!ok)
+                            {
+                                var error = root.TryGetProperty("error", out var errorNode) ? errorNode.GetString() : null;
+                                AppLog.Warning("GATEWAY_REJECTED", error ?? "Google từ chối yêu cầu.", new Dictionary<string, object?>
+                                {
+                                    ["action"] = action,
+                                    ["attempt"] = attempt,
+                                    ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+                                });
+                                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "Google từ chối yêu cầu." : error);
+                            }
+
+                            AppLog.Info("GATEWAY_CALL_OK", "Google gateway xử lý thành công.", new Dictionary<string, object?>
+                            {
+                                ["action"] = action,
+                                ["attempt"] = attempt,
+                                ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+                            });
+                            return root.Clone();
+                        }
+                    }
+                    finally
+                    {
+                        GoogleGatewayResilienceV1428.TransportGate.Release();
+                    }
+                }
+                catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && attempt < attempts)
+                {
+                    last = ex;
+                }
+                catch (HttpRequestException ex) when (attempt < attempts)
+                {
+                    last = ex;
+                }
+
+                if (attempt < attempts && last is not null)
+                {
+                    AppLog.Warning("GATEWAY_TRANSIENT_RETRY", "Google gateway lỗi tạm thời; tự thử lại cùng tuyến kết nối hiện tại.", new Dictionary<string, object?>
+                    {
+                        ["action"] = action,
+                        ["attempt"] = attempt,
+                        ["error"] = last.GetType().Name,
+                        ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
+                    });
+                    continue;
+                }
             }
 
-            using var doc = JsonDocument.Parse(text);
-            var root = doc.RootElement;
-            var ok = root.TryGetProperty("ok", out var okNode) && okNode.ValueKind == JsonValueKind.True;
-            if (!ok)
-            {
-                var error = root.TryGetProperty("error", out var errorNode) ? errorNode.GetString() : null;
-                AppLog.Warning("GATEWAY_REJECTED", error ?? "Google từ chối yêu cầu.", new Dictionary<string, object?>
-                {
-                    ["action"] = action,
-                    ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
-                });
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "Google từ chối yêu cầu." : error);
-            }
-
-            AppLog.Info("GATEWAY_CALL_OK", "Google gateway xử lý thành công.", new Dictionary<string, object?>
-            {
-                ["action"] = action,
-                ["elapsed_ms"] = stopwatch.ElapsedMilliseconds
-            });
-            return root.Clone();
+            throw last ?? new HttpRequestException("Google Gateway chưa phản hồi ổn định.");
         }
         catch (Exception ex)
         {
