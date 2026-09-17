@@ -11,17 +11,19 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <Version>1.4.18</Version>
-    <InformationalVersion>1.4.18</InformationalVersion>
-    <AssemblyVersion>1.4.18.0</AssemblyVersion>
-    <FileVersion>1.4.18.0</FileVersion>
+    <Version>1.4.19</Version>
+    <InformationalVersion>1.4.19</InformationalVersion>
+    <AssemblyVersion>1.4.19.0</AssemblyVersion>
+    <FileVersion>1.4.19.0</FileVersion>
     <Description>PICKFACE DAMAGE 1291 Windows portable</Description>
     <ApplicationIcon>Assets\PickfaceDamage1291.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="MainForm.cs;MainFormV2.cs;AdminUsersControl.cs;GoogleService.cs;VersionUpdateService.cs;UiRuntimeFixes.cs" />
     <PackageReference Include="ClosedXML" Version="0.102.2" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.0.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <EmbeddedResource Include="Assets\MAU_BBBG_INVENTORY_PICKFACE_TEMPLATE_V2_SIZE10.docx" LogicalName="PickfaceDamage1291.Assets.BbbgInventoryTemplateV2Size10.docx" />
   </ItemGroup>
 </Project>

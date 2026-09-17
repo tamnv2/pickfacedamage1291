@@ -21,6 +21,7 @@ internal static class V1419Runtime
         var tab = FindAll<TabControl>(main).FirstOrDefault()?.TabPages.Cast<TabPage>()
             .FirstOrDefault(x => x.Text == "Danh sách đã nhập");
         if (tab is null) return;
+
         var actions = FindAll<FlowLayoutPanel>(tab)
             .FirstOrDefault(x => x.Controls.OfType<Button>().Any(b => Equals(b.Tag, "v1416-export")));
         if (actions is null || actions.Controls.OfType<Button>().Any(b => Equals(b.Tag, "v1419-export-info"))) return;
@@ -40,6 +41,7 @@ internal static class V1419Runtime
         actions.Controls.SetChildIndex(bbbg, Math.Max(0, index + 1));
         actions.WrapContents = true;
         actions.Height = 92;
+
         if (actions.Parent is TableLayoutPanel layout)
         {
             var row = layout.GetRow(actions);
@@ -65,6 +67,7 @@ internal static class V1419Runtime
         {
             button.Enabled = false;
             if (!await EnsureFreshDataAsync(main, status, "xuất thông tin")) return;
+
             var all = Database.GetReports(int.MaxValue);
             if (all.Count == 0)
             {
@@ -73,7 +76,9 @@ internal static class V1419Runtime
             }
 
             using var select = new DamageExportSelectionDialogV148(all);
+            RelabelInformationDialog(select);
             if (select.ShowDialog(main) != DialogResult.OK) return;
+
             var selected = select.Filter(all);
             if (selected.Count == 0)
             {
@@ -82,19 +87,39 @@ internal static class V1419Runtime
             }
 
             var result = await DamageReportExportServiceV1416.ExportAsync(
-                main, selected, select.SelectedDates, select.SelectedShiftLabel,
+                main,
+                selected,
+                select.SelectedDates,
+                select.SelectedShiftLabel,
                 new Progress<string>(s => { if (status is not null) status.Text = s; }));
             if (result is null) return;
+
             if (status is not null) status.Text = $"Đã xuất {result.ReportCount:N0} phiếu.";
             var note = result.MissingImages > 0 ? $" Không tải/nhúng được {result.MissingImages:N0} ảnh." : string.Empty;
-            NotificationCenter.Show(main, $"Đã xuất {result.ReportCount:N0} phiếu và {result.ImageCount:N0} ảnh.{note}", "Xuất thông tin", MessageBoxIcon.Information);
+            NotificationCenter.Show(main,
+                $"Đã xuất {result.ReportCount:N0} phiếu và {result.ImageCount:N0} ảnh.{note}",
+                "Xuất thông tin",
+                MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
             AppLog.Exception("EXPORT_INFORMATION_V1419_FAILED", ex);
             NotificationCenter.Show(main, ex.Message, "Không xuất được thông tin", MessageBoxIcon.Error);
         }
-        finally { button.Enabled = true; }
+        finally
+        {
+            button.Enabled = true;
+        }
+    }
+
+    private static void RelabelInformationDialog(Form dialog)
+    {
+        dialog.Text = "Chọn phạm vi xuất thông tin";
+        foreach (var button in FindAll<Button>(dialog))
+        {
+            if (string.Equals(button.Text, "Xuất Excel", StringComparison.Ordinal))
+                button.Text = "Xuất thông tin";
+        }
     }
 
     private static async Task ExportBbbgAsync(MainForm main, Button button)
@@ -104,6 +129,7 @@ internal static class V1419Runtime
         {
             button.Enabled = false;
             if (!await EnsureFreshDataAsync(main, status, "xuất BBBG Inventory")) return;
+
             var all = Database.GetReports(int.MaxValue);
             if (all.Count == 0)
             {
@@ -113,9 +139,10 @@ internal static class V1419Runtime
 
             using var select = new BbbgExportSelectionDialogV1419(all);
             if (select.ShowDialog(main) != DialogResult.OK) return;
+
             using var folder = new FolderBrowserDialog
             {
-                Description = "Chọn thư mục lưu BBBG Inventory. Chọn cả 2 ca sẽ tạo 2 file Word riêng.",
+                Description = "Chọn thư mục lưu BBBG Inventory. Chọn cả 2 ca sẽ luôn tạo 2 file Word riêng.",
                 UseDescriptionForTitle = true,
                 ShowNewFolderButton = true
             };
@@ -123,12 +150,11 @@ internal static class V1419Runtime
 
             var exported = 0;
             var total = 0;
-            var skipped = new List<string>();
             foreach (var shift in select.SelectedShifts)
             {
                 var reports = select.Filter(all, shift);
-                if (reports.Count == 0) { skipped.Add(shift); continue; }
                 if (status is not null) status.Text = $"Đang tạo BBBG {shift}: {reports.Count:N0} phiếu...";
+
                 var name = $"BBBG Inventory Pickface 1291 ngày {select.SelectedDate:ddMMyyyy} - {shift}.docx";
                 var path = UniquePath(folder.SelectedPath, name);
                 await Task.Run(() => BbbgInventoryWordExporterV1419.Export(path, reports));
@@ -136,14 +162,12 @@ internal static class V1419Runtime
                 total += reports.Count;
             }
 
-            if (exported == 0)
-            {
-                NotificationCenter.Show(main, "Không có phiếu phù hợp ngày/ca đã chọn.", "Xuất BBBG Inventory", MessageBoxIcon.Warning);
-                return;
-            }
             if (status is not null) status.Text = $"Đã xuất {exported} file BBBG, {total:N0} phiếu.";
-            var skipNote = skipped.Count == 0 ? string.Empty : $" Không có dữ liệu: {string.Join(", ", skipped)}.";
-            NotificationCenter.Show(main, $"Đã tạo {exported} file Word BBBG Inventory, tổng {total:N0} phiếu.{skipNote}", "Xuất BBBG Inventory", MessageBoxIcon.Information);
+            NotificationCenter.Show(main,
+                $"Đã tạo {exported} file Word BBBG Inventory, tổng {total:N0} dòng dữ liệu thực tế.",
+                "Xuất BBBG Inventory",
+                MessageBoxIcon.Information);
+
             AppLog.Info("EXPORT_BBBG_INVENTORY_V1419_DONE", "Đã tạo BBBG Inventory.", new Dictionary<string, object?>
             {
                 ["entry_date"] = select.SelectedDate.ToString("yyyy-MM-dd"),
@@ -157,7 +181,10 @@ internal static class V1419Runtime
             AppLog.Exception("EXPORT_BBBG_INVENTORY_V1419_FAILED", ex);
             NotificationCenter.Show(main, ex.Message, "Không xuất được BBBG Inventory", MessageBoxIcon.Error);
         }
-        finally { button.Enabled = true; }
+        finally
+        {
+            button.Enabled = true;
+        }
     }
 
     private static async Task<bool> EnsureFreshDataAsync(MainForm main, Label? status, string operation)
@@ -175,18 +202,24 @@ internal static class V1419Runtime
                 AppLog.Exception("EXPORT_PRE_SYNC_V1419_FAILED", ex, new Dictionary<string, object?> { ["operation"] = operation });
                 return MessageBox.Show(main,
                     $"Không nhận được dữ liệu mới nhất từ Google. Nếu tiếp tục, {operation} chỉ dùng dữ liệu hiện có trên máy này.\n\n{ex.Message}\n\nTiếp tục?",
-                    "Đồng bộ trước khi xuất chưa hoàn tất", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+                    "Đồng bộ trước khi xuất chưa hoàn tất",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) == DialogResult.Yes;
             }
         }
+
         return MessageBox.Show(main,
             $"Ứng dụng đang offline/chưa kết nối Google. {operation} chỉ dùng dữ liệu hiện có trên máy này. Tiếp tục?",
-            "Xuất dữ liệu local", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+            "Xuất dữ liệu local",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning) == DialogResult.Yes;
     }
 
     private static string UniquePath(string folder, string fileName)
     {
         var path = Path.Combine(folder, fileName);
         if (!File.Exists(path)) return path;
+
         var stem = Path.GetFileNameWithoutExtension(fileName);
         var ext = Path.GetExtension(fileName);
         for (var i = 2; i < 10000; i++)
@@ -226,14 +259,32 @@ internal sealed class BbbgExportSelectionDialogV1419 : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Segoe UI", 10F);
 
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 5 };
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(18),
+            ColumnCount = 1,
+            RowCount = 5
+        };
         for (var i = 0; i < 5; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.Controls.Add(new Label { Text = "Ngày nhập thực tế (chỉ chọn 1 ngày):", AutoSize = true, Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold), Margin = new Padding(0, 0, 0, 8) }, 0, 0);
 
-        var choices = reports.GroupBy(x => x.CreatedAt.ToLocalTime().Date)
+        root.Controls.Add(new Label
+        {
+            Text = "Ngày nhập thực tế (chỉ chọn 1 ngày):",
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 8)
+        }, 0, 0);
+
+        var choices = reports
+            .GroupBy(x => x.CreatedAt.ToLocalTime().Date)
             .OrderByDescending(x => x.Key)
-            .Select(x => new DateChoice(x.Key, x.Count(r => EqShift(r, "Ca 1")), x.Count(r => EqShift(r, "Ca 2"))))
+            .Select(x => new DateChoice(
+                x.Key,
+                x.Count(r => EqShift(r, "Ca 1")),
+                x.Count(r => EqShift(r, "Ca 2"))))
             .ToList();
+
         _date.Width = 420;
         foreach (var choice in choices) _date.Items.Add(choice);
         if (_date.Items.Count > 0)
@@ -243,8 +294,20 @@ internal sealed class BbbgExportSelectionDialogV1419 : Form
         }
         root.Controls.Add(_date, 0, 1);
 
-        var shifts = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, WrapContents = true, Padding = new Padding(0, 12, 0, 4) };
-        shifts.Controls.Add(new Label { Text = "Ca ghi nhận:", AutoSize = true, Padding = new Padding(0, 5, 12, 0), Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold) });
+        var shifts = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            WrapContents = true,
+            Padding = new Padding(0, 12, 0, 4)
+        };
+        shifts.Controls.Add(new Label
+        {
+            Text = "Ca ghi nhận:",
+            AutoSize = true,
+            Padding = new Padding(0, 5, 12, 0),
+            Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold)
+        });
         _shift1.Margin = new Padding(2, 5, 14, 4);
         _shift2.Margin = new Padding(2, 5, 14, 4);
         shifts.Controls.AddRange([_shift1, _shift2]);
@@ -252,8 +315,11 @@ internal sealed class BbbgExportSelectionDialogV1419 : Form
 
         root.Controls.Add(new Label
         {
-            Text = "Nếu chọn cả Ca 1 và Ca 2, ứng dụng tạo 2 file Word riêng theo dữ liệu thực tế của từng ca. Nội dung biên bản không hiển thị thông tin ca.",
-            AutoSize = true, MaximumSize = new Size(500, 0), ForeColor = Color.DimGray, Margin = new Padding(0, 8, 0, 12)
+            Text = "Nếu chọn cả Ca 1 và Ca 2, ứng dụng luôn tạo 2 file Word riêng. Mỗi file chỉ chứa đúng số dòng dữ liệu thực tế của ca đó; trong nội dung biên bản không hiển thị thông tin ca.",
+            AutoSize = true,
+            MaximumSize = new Size(500, 0),
+            ForeColor = Color.DimGray,
+            Margin = new Padding(0, 8, 0, 12)
         }, 0, 3);
 
         var ok = new Button { Text = "Xuất BBBG Inventory", AutoSize = true };
@@ -275,21 +341,44 @@ internal sealed class BbbgExportSelectionDialogV1419 : Form
             DialogResult = DialogResult.OK;
             Close();
         };
-        var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+
+        var actions = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false
+        };
         actions.Controls.AddRange([ok, cancel]);
         root.Controls.Add(actions, 0, 4);
+
         Controls.Add(root);
         AcceptButton = ok;
         CancelButton = cancel;
     }
 
     public DateTime SelectedDate => ((DateChoice)_date.SelectedItem!).Date;
-    public IReadOnlyList<string> SelectedShifts => new[] { _shift1.Checked ? "Ca 1" : null, _shift2.Checked ? "Ca 2" : null }.Where(x => x is not null).Cast<string>().ToList();
+
+    public IReadOnlyList<string> SelectedShifts => new[]
+        {
+            _shift1.Checked ? "Ca 1" : null,
+            _shift2.Checked ? "Ca 2" : null
+        }
+        .Where(x => x is not null)
+        .Cast<string>()
+        .ToList();
+
     public List<DamageReport> Filter(IReadOnlyList<DamageReport> reports, string shift) => reports
         .Where(x => x.CreatedAt.ToLocalTime().Date == SelectedDate.Date && EqShift(x, shift))
-        .OrderBy(x => x.OccurredDate).ThenBy(x => x.Hour).ThenBy(x => x.Minute).ThenBy(x => x.CreatedAt).ToList();
+        .OrderBy(x => x.OccurredDate)
+        .ThenBy(x => x.Hour)
+        .ThenBy(x => x.Minute)
+        .ThenBy(x => x.CreatedAt)
+        .ToList();
 
-    private static bool EqShift(DamageReport report, string shift) => string.Equals(report.Shift.Trim(), shift, StringComparison.OrdinalIgnoreCase);
+    private static bool EqShift(DamageReport report, string shift)
+        => string.Equals(report.Shift.Trim(), shift, StringComparison.OrdinalIgnoreCase);
+
     private sealed record DateChoice(DateTime Date, int Shift1, int Shift2)
     {
         public override string ToString() => $"{Date:dd/MM/yyyy}  —  Ca 1: {Shift1:N0} | Ca 2: {Shift2:N0}";
