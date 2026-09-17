@@ -39,13 +39,13 @@ internal static class UsernameAuthService
             {
                 AppLog.Info(
                     "USERNAME_LOGIN_DIRECT_FALLBACK_OK",
-                    "Đăng nhập thành công bằng Firebase direct sau khi Google Gateway bị timeout.",
+                    "Đăng nhập thành công bằng Firebase direct sau khi Google Gateway bị lỗi tạm thời.",
                     new Dictionary<string, object?> { ["username"] = username });
                 return direct;
             }
 
             throw new InvalidOperationException(
-                "Google Gateway đăng nhập chưa phản hồi sau khi đã thử lại. Nếu máy này đã có phiên hợp lệ, có thể dùng “Tiếp tục offline”; nếu cần đăng nhập online, kiểm tra mạng rồi thử lại.",
+                "Google Gateway đăng nhập chưa phản hồi ổn định sau khi đã thử lại. Nếu máy này đã có phiên hợp lệ, có thể dùng “Tiếp tục offline”; nếu cần đăng nhập online, kiểm tra mạng rồi thử lại.",
                 ex);
         }
 
@@ -86,13 +86,13 @@ internal static class UsernameAuthService
             {
                 action = "password_reset_by_username",
                 username = username.Trim()
-            }, ct);
+            }, ct, retryTransient: true);
             if (!response.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
                 throw new InvalidOperationException(ReadError(response, "Không gửi được yêu cầu đặt lại mật khẩu."));
         }
         catch (Exception ex) when (IsTransientTransportError(ex) && !ct.IsCancellationRequested)
         {
-            throw new InvalidOperationException("Google Gateway chưa phản hồi. Kiểm tra kết nối mạng rồi thử gửi lại yêu cầu quên mật khẩu.", ex);
+            throw new InvalidOperationException("Google Gateway chưa phản hồi ổn định. Kiểm tra kết nối mạng rồi thử gửi lại yêu cầu quên mật khẩu.", ex);
         }
     }
 
@@ -122,26 +122,72 @@ internal static class UsernameAuthService
     private static async Task<JsonElement> PostAsync(object payload, CancellationToken ct, bool retryTransient = false)
     {
         var json = JsonSerializer.Serialize(payload);
+        var action = ReadAction(payload);
 
         async Task<JsonElement> SendOnceAsync()
         {
-            using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            using var response = await Http.PostAsync(RuntimeConfigService.GoogleGatewayUrl, content, ct);
-            var text = await response.Content.ReadAsStringAsync(ct);
-            if (!response.IsSuccessStatusCode)
+            await GoogleGatewayResilienceV1428.TransportGate.WaitAsync(ct);
+            try
             {
-                if ((int)response.StatusCode >= 500)
-                    throw new HttpRequestException($"Google Gateway tạm thời lỗi HTTP {(int)response.StatusCode}.");
-                throw new InvalidOperationException($"Gateway lỗi HTTP {(int)response.StatusCode}.");
-            }
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                if (retryTransient && !string.IsNullOrWhiteSpace(action))
+                    linked.CancelAfter(GoogleGatewayResilienceV1428.AttemptTimeout(action));
 
-            using var doc = JsonDocument.Parse(text);
-            return doc.RootElement.Clone();
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using var request = new HttpRequestMessage(HttpMethod.Post, RuntimeConfigService.GoogleGatewayUrl) { Content = content };
+                request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true, NoStore = true };
+                request.Headers.TryAddWithoutValidation("Pragma", "no-cache");
+                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseContentRead, linked.Token);
+                var text = await response.Content.ReadAsStringAsync(linked.Token);
+                var mediaType = response.Content.Headers.ContentType?.MediaType;
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (retryTransient && GoogleGatewayResilienceV1428.IsTransientHttpStatus(response.StatusCode))
+                        throw new HttpRequestException($"Google Gateway tạm thời lỗi HTTP {(int)response.StatusCode}.");
+                    throw new InvalidOperationException($"Gateway lỗi HTTP {(int)response.StatusCode}.");
+                }
+
+                if (GoogleGatewayResilienceV1428.LooksLikeHtmlOrInvalidEnvelope(text, mediaType))
+                {
+                    if (retryTransient)
+                        throw new HttpRequestException("Google Gateway trả HTML/nội dung không phải JSON.");
+                    throw new InvalidOperationException("Google Gateway trả dữ liệu không hợp lệ.");
+                }
+
+                try
+                {
+                    using var doc = JsonDocument.Parse(text);
+                    return doc.RootElement.Clone();
+                }
+                catch (JsonException ex)
+                {
+                    if (retryTransient) throw new HttpRequestException("Google Gateway trả JSON không hoàn chỉnh.", ex);
+                    throw new InvalidOperationException("Google Gateway trả dữ liệu không hợp lệ.", ex);
+                }
+            }
+            finally
+            {
+                GoogleGatewayResilienceV1428.TransportGate.Release();
+            }
         }
 
         return retryTransient
             ? await NetworkHttpClientFactory.RetryAsync(SendOnceAsync, attempts: 2, ct)
             : await SendOnceAsync();
+    }
+
+    private static string ReadAction(object payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+            return doc.RootElement.TryGetProperty("action", out var actionNode) ? actionNode.GetString() ?? string.Empty : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static async Task<FirebaseSession?> TryDirectCachedEmailSignInAsync(string username, string password, CancellationToken ct)
@@ -176,7 +222,7 @@ internal static class UsernameAuthService
         {
             AppLog.Warning(
                 "USERNAME_LOGIN_DIRECT_FALLBACK_FAILED",
-                "Firebase direct fallback không đăng nhập được sau khi Google Gateway bị timeout.",
+                "Firebase direct fallback không đăng nhập được sau khi Google Gateway bị lỗi tạm thời.",
                 new Dictionary<string, object?>
                 {
                     ["username"] = username,
