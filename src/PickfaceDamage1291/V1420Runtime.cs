@@ -11,7 +11,7 @@ internal static class V1420Runtime
         {
             PatchBbbgButton(main);
             main.Shown += (_, _) => PatchBbbgButton(main);
-            AppLog.Info("V1420_RUNTIME_APPLIED", "Đã áp dụng sửa xuất BBBG Inventory v1.4.21.");
+            AppLog.Info("V1420_RUNTIME_APPLIED", "Đã áp dụng sửa xuất BBBG Inventory v1.4.22.");
         }
         catch (Exception ex)
         {
@@ -138,6 +138,7 @@ internal static class V1420Runtime
         if (string.IsNullOrWhiteSpace(directory)) directory = Environment.CurrentDirectory;
         var stem = Path.GetFileNameWithoutExtension(selectedPath).Trim();
         if (string.IsNullOrWhiteSpace(stem)) stem = "BBBG Inventory Pickface 1291";
+        stem = RemoveTrailingShiftSuffix(stem);
 
         return shifts
             .Select(shift =>
@@ -146,6 +147,23 @@ internal static class V1420Runtime
                 return (shift, EnsureUniquePath(target, timestamp));
             })
             .ToList();
+    }
+
+    private static string RemoveTrailingShiftSuffix(string stem)
+    {
+        var value = stem.Trim();
+        while (true)
+        {
+            var changed = false;
+            foreach (var suffix in new[] { " - Ca 1", " - Ca 2" })
+            {
+                if (!value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
+                value = value[..^suffix.Length].TrimEnd();
+                changed = true;
+                break;
+            }
+            if (!changed) return string.IsNullOrWhiteSpace(value) ? "BBBG Inventory Pickface 1291" : value;
+        }
     }
 
     private static string EnsureUniquePath(string path, string timestamp)
