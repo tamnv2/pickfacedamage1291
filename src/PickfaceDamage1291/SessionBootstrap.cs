@@ -5,8 +5,20 @@ internal static class SessionBootstrap
     public static async Task<bool> PrepareOnlineAsync(FirebaseSession session, IWin32Window? owner = null, CancellationToken ct = default)
     {
         session.OfflineMode = false;
-        var profile = await FirebaseClient.GetProfileAsync(session.Uid, session.IdToken, ct)
+
+        var profile = session.Profile;
+        var profileAlreadyVerified =
+            profile.Active &&
+            !string.IsNullOrWhiteSpace(profile.Username) &&
+            !string.IsNullOrWhiteSpace(profile.Uid) &&
+            string.Equals(profile.Uid, session.Uid, StringComparison.Ordinal);
+
+        if (!profileAlreadyVerified)
+        {
+            profile = await FirebaseClient.GetProfileAsync(session.Uid, session.IdToken, ct)
                       ?? throw new InvalidOperationException("Tài khoản chưa được cấp hồ sơ sử dụng ứng dụng. Liên hệ ADMIN.");
+        }
+
         if (!profile.Active) throw new InvalidOperationException("Tài khoản đã bị khóa hoặc ngừng hoạt động.");
         session.Profile = profile;
         session.Email = profile.Email;
@@ -15,7 +27,8 @@ internal static class SessionBootstrap
         {
             ["firebase_rtdb_route"] = NetworkHttpClientFactory.IsRtdbRelayPreferred ? "google_relay" : "direct_firebase",
             ["github_runtime_config_reachable"] = RuntimeConfigService.GitHubRuntimeConfigReachable,
-            ["google_gateway"] = RuntimeConfigService.IsGoogleGatewayConfigured
+            ["google_gateway"] = RuntimeConfigService.IsGoogleGatewayConfigured,
+            ["profile_reused"] = profileAlreadyVerified
         });
 
         OperatorLeaseManager? manager = null;
@@ -41,9 +54,6 @@ internal static class SessionBootstrap
         AppSession.OperatorManager = manager;
         SecureSessionStore.Save(session);
 
-        // Login audit is committed to the durable local outbox only. It is sent by the normal
-        // cloud-sync path after the main window is usable, avoiding both login delay and a race
-        // where two concurrent transports could append the same event at once.
         try
         {
             DurableAuditQueue.Enqueue(session, "LOGIN_SUCCESS", new { role = profile.Role }, manager?.SessionId);
@@ -51,7 +61,6 @@ internal static class SessionBootstrap
         catch (Exception ex)
         {
             AppLog.Exception("LOGIN_AUDIT_QUEUE_FAILED", ex);
-            // Audit transport/storage must never invalidate an otherwise valid login.
         }
         return true;
     }
