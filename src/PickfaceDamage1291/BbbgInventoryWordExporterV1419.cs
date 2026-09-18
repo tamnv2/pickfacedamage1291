@@ -41,7 +41,8 @@ internal static class BbbgInventoryWordExporterV1419
                 ["template"] = "V2_CANONICAL_V1424",
                 ["logo"] = "OWNER_THE_SUPRA_V1425",
                 ["logo_sha256"] = BbbgOfficialLogoV1425.Sha256,
-                ["shift_in_document"] = false
+                ["shift_in_document"] = false,
+                ["entry_date_sentence"] = reports.Count > 0 ? reports[0].CreatedAt.ToLocalTime().ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : string.Empty
             });
     }
 
@@ -59,6 +60,7 @@ internal static class BbbgInventoryWordExporterV1419
                        ?? throw new InvalidDataException("Mẫu BBBG V2 không có nội dung Body.");
 
             ReplaceLogoWithOwnerSuppliedPng(main);
+            ApplyEntryDateSentence(body, reports);
 
             var table = FindDataTable(body)
                         ?? throw new InvalidDataException("Không tìm thấy bảng dữ liệu BBBG 6 cột trong mẫu V2.");
@@ -92,6 +94,48 @@ internal static class BbbgInventoryWordExporterV1419
         }
 
         return memory.ToArray();
+    }
+
+    private static void ApplyEntryDateSentence(Body body, IReadOnlyList<DamageReport> reports)
+    {
+        if (reports.Count == 0)
+            throw new InvalidDataException("BBBG không có dữ liệu để xác định ngày nhập thực tế.");
+
+        var entryDates = reports
+            .Select(x => x.CreatedAt.ToLocalTime().Date)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+        if (entryDates.Count != 1)
+            throw new InvalidDataException("Một file BBBG chỉ được chứa dữ liệu của đúng một ngày nhập thực tế.");
+
+        var paragraph = body.Descendants<Paragraph>()
+            .FirstOrDefault(x =>
+            {
+                var text = Normalize(x.InnerText);
+                return text.Contains("HÔM NAY, NGÀY", StringComparison.Ordinal) &&
+                       text.Contains("TẠI KHO THE SUPRA", StringComparison.Ordinal);
+            })
+            ?? throw new InvalidDataException("Mẫu BBBG V2 không tìm thấy dòng 'Hôm nay, ngày ... tại kho The Supra'.");
+
+        var textValue = $"Hôm nay, ngày {entryDates[0]:dd/MM/yyyy}, vào lúc ............................ tại kho The Supra – Hưng yên, các bên gồm:";
+        SetParagraphText(paragraph, textValue);
+    }
+
+    private static void SetParagraphText(Paragraph paragraph, string value)
+    {
+        var runProperties = paragraph.Descendants<RunProperties>()
+            .FirstOrDefault()?.CloneNode(true) as RunProperties;
+
+        foreach (var child in paragraph.ChildElements
+                     .Where(x => x is not ParagraphProperties)
+                     .ToList())
+            child.Remove();
+
+        var run = new Run();
+        if (runProperties is not null) run.Append(runProperties);
+        run.Append(new Text(value) { Space = SpaceProcessingModeValues.Preserve });
+        paragraph.Append(run);
     }
 
     private static void ReplaceLogoWithOwnerSuppliedPng(MainDocumentPart main)
