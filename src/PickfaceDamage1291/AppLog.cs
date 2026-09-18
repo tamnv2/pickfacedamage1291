@@ -184,6 +184,28 @@ internal static partial class AppLog
         return sent;
     }
 
+    public static async Task<bool> FlushCurrentAsync(TimeSpan timeout)
+    {
+        Initialize();
+        string? sealedPath;
+        lock (Gate)
+            sealedPath = SealCurrentLocked(crash: false);
+
+        if (string.IsNullOrWhiteSpace(sealedPath)) return true;
+        if (!CanUploadNow()) return false;
+
+        try
+        {
+            using var cts = new CancellationTokenSource(timeout);
+            return await UploadSpecificAsync(sealedPath, cts.Token);
+        }
+        catch
+        {
+            // Keep the sealed file locally; next online session/manual send will retry.
+            return false;
+        }
+    }
+
     private static void StartAutoUpload()
     {
         lock (Gate)
