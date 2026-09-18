@@ -128,7 +128,8 @@ internal sealed class SyncConflictResolutionDialog : Form
         {
             Text = remote.Deleted ? "Chấp nhận xoá theo Google" : "Dùng bản Google",
             AutoSize = true,
-            MinimumSize = new Size(150, 40)
+            MinimumSize = new Size(150, 40),
+            Enabled = canKeepLocal
         };
         var keepLocal = new Button
         {
