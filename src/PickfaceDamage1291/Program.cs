@@ -215,6 +215,14 @@ internal static class Program
                 ["elapsed_ms"] = cleanup.ElapsedMilliseconds,
                 ["remote_logout_audit_wait"] = false
             });
+            try
+            {
+                AppLog.FlushCurrentAsync(TimeSpan.FromSeconds(6)).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // Log remains local and will retry automatically on the next online session.
+            }
             if (manager is not null)
             {
                 try { manager.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
