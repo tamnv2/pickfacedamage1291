@@ -181,7 +181,7 @@ internal static class V1427Runtime
             try
             {
                 if (status is not null) status.Text = "Đang nhận dữ liệu mới nhất trước khi xuất BBBG Inventory...";
-                await CloudSyncService.PullSharedDataAsync(new Progress<string>(s => { if (status is not null) status.Text = s; }));
+                await CloudSyncService.PullReportsOnlyAsync(new Progress<string>(s => { if (status is not null) status.Text = s; }), TimeSpan.FromSeconds(20));
                 return true;
             }
             catch (Exception ex)
