@@ -29,4 +29,12 @@ Require-Text "$src/SessionBootstrap.cs" 'profile_reused' 'Login bootstrap no lon
 Require-Text "$src/Program.cs" 'DurableAuditQueue.Enqueue(session, "LOGOUT"' 'Logout audit is no longer queued locally.'
 Forbid-Text "$src/Program.cs" 'FirebaseClient.AppendAuditAsync(session, "LOGOUT"' 'Regression: logout blocks on remote audit again.'
 
-Write-Host 'v1.4.28 regression probe PASS'
+Require-Text "$src/CloudSyncService.cs" 'PullReportsOnlyAsync' 'Missing report-only smart sync path.'
+Require-Text "$src/V142Runtime.cs" 'PullReportsOnlyAsync(progress, TimeSpan.FromSeconds(30), ct)' 'Network recovery regressed to a heavier shared-data pull.'
+Require-Text "$src/V1416ExcelExport.cs" 'PullReportsOnlyAsync' 'Excel export pre-sync regressed to pulling the SKU catalog.'
+Forbid-Text "$src/V1416ExcelExport.cs" 'new XLWorkbook(path)' 'Regression: Excel export reopens the XLSX package after the first save.'
+Forbid-Text "$src/V1416ExcelExport.cs" 'wb.Save();' 'Regression: Excel export performs a second workbook save.'
+Require-Text "$src/DamageReportExportV148.cs" 'beforeSave?.Invoke(wb, ws, reports, ct);' 'Missing in-memory Excel formatting hook before the single save.'
+Require-Text "$src/DamageReportExportV148.cs" 'EXPORT_EXCEL_PERF' 'Missing Excel stage performance telemetry.'
+
+Write-Host 'cumulative regression probe PASS'
