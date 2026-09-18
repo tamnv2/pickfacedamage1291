@@ -40,6 +40,18 @@ internal static class SyncConflictResolver
 
         return null;
     }
+
+    public static RemoteApplyResult ApplyRemote(RemoteReportChange remote)
+    {
+        var local = Database.GetReportById(remote.ReportId);
+        if (local is not null)
+            Database.SetReportStatus(remote.ReportId, "SYNCED");
+
+        var result = SyncCacheStore.ApplyRemoteReport(remote);
+        if (result == RemoteApplyResult.Conflict)
+            throw new InvalidOperationException("Bản Google chưa thể áp dụng. Xung đột được giữ nguyên để tránh mất dữ liệu.");
+        return result;
+    }
 }
 
 internal sealed class SyncConflictResolutionDialog : Form
@@ -129,10 +141,6 @@ internal sealed class SyncConflictResolutionDialog : Form
         cancel.Click += (_, _) => { Choice = SyncConflictChoice.Cancel; DialogResult = DialogResult.Cancel; Close(); };
         useGoogle.Click += (_, _) => { Choice = SyncConflictChoice.UseGoogle; DialogResult = DialogResult.OK; Close(); };
         keepLocal.Click += (_, _) => { Choice = SyncConflictChoice.KeepLocal; DialogResult = DialogResult.OK; Close(); };
-
-        AppUiStyle.StyleButton(cancel, ButtonVisual.Normal);
-        AppUiStyle.StyleButton(useGoogle, ButtonVisual.Normal);
-        AppUiStyle.StyleButton(keepLocal, ButtonVisual.Primary);
 
         actions.Controls.Add(cancel);
         actions.Controls.Add(keepLocal);
