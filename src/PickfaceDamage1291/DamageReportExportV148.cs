@@ -187,7 +187,8 @@ internal static class DamageReportExportServiceV148
         IReadOnlyList<DateTime> selectedEntryDates,
         string selectedShiftLabel,
         IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Action<XLWorkbook, IXLWorksheet, IReadOnlyList<DamageReport>, CancellationToken>? beforeSave = null)
     {
         var reports = selectedReports
             .OrderBy(x => x.OccurredDate)
@@ -232,6 +233,7 @@ internal static class DamageReportExportServiceV148
         };
         if (save.ShowDialog(owner) != DialogResult.OK) return null;
 
+        var exportTimer = System.Diagnostics.Stopwatch.StartNew();
         progress?.Report("Đang chuẩn bị dữ liệu xuất Excel...");
         using var wb = new XLWorkbook();
         var ws = wb.Worksheets.Add("Hàng hỏng Pickface 1291");
@@ -357,8 +359,26 @@ internal static class DamageReportExportServiceV148
         ws.PageSetup.CenterHorizontally = true;
         ws.PageSetup.PrintAreas.Add(1, 1, reports.Count + 2, 8);
 
+        beforeSave?.Invoke(wb, ws, reports, ct);
+
         progress?.Report("Đang ghi file Excel...");
+        var saveTimer = System.Diagnostics.Stopwatch.StartNew();
         wb.SaveAs(save.FileName);
+        saveTimer.Stop();
+        exportTimer.Stop();
+
+        long fileBytes = 0;
+        try { fileBytes = new FileInfo(save.FileName).Length; } catch { }
+        AppLog.Info("EXPORT_EXCEL_PERF", "Đã xuất Excel theo pipeline một lần lưu.", new Dictionary<string, object?>
+        {
+            ["reports"] = reports.Count,
+            ["images"] = totalImages,
+            ["missing_images"] = missingImages,
+            ["total_ms"] = exportTimer.ElapsedMilliseconds,
+            ["save_ms"] = saveTimer.ElapsedMilliseconds,
+            ["file_bytes"] = fileBytes
+        });
+
         progress?.Report("Đã xuất Excel.");
         return new DamageExportResultV148(save.FileName, reports.Count, totalImages, missingImages);
     }

@@ -64,11 +64,11 @@ internal static class V1416Runtime
             {
                 try
                 {
-                    if (status is not null) status.Text = "Đang nhận dữ liệu mới nhất trước khi xuất Excel...";
-                    await CloudSyncService.PullSharedDataAsync(new Progress<string>(s =>
+                    if (status is not null) status.Text = "Đang kiểm tra dữ liệu phiếu mới nhất trước khi xuất Excel...";
+                    await CloudSyncService.PullReportsOnlyAsync(new Progress<string>(s =>
                     {
                         if (status is not null) status.Text = s;
-                    }));
+                    }), TimeSpan.FromSeconds(20));
                 }
                 catch (Exception ex)
                 {
@@ -158,22 +158,25 @@ internal static class DamageReportExportServiceV1416
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
-        var result = await DamageReportExportServiceV148.ExportAsync(
+        return await DamageReportExportServiceV148.ExportAsync(
             owner,
             selectedReports,
             selectedEntryDates,
             selectedShiftLabel,
             progress,
-            ct);
-        if (result is null) return null;
-
-        progress?.Report("Đang hoàn thiện định dạng Excel...");
-        ApplyOwnerFormat(result.Path, selectedReports, ct);
-        progress?.Report("Đã hoàn thiện định dạng Excel.");
-        return result;
+            ct,
+            (wb, ws, reports, token) =>
+            {
+                progress?.Report("Đang hoàn thiện định dạng Excel...");
+                ApplyOwnerFormat(wb, ws, reports, token);
+            });
     }
 
-    private static void ApplyOwnerFormat(string path, IReadOnlyList<DamageReport> selectedReports, CancellationToken ct)
+    private static void ApplyOwnerFormat(
+        XLWorkbook wb,
+        IXLWorksheet ws,
+        IReadOnlyList<DamageReport> selectedReports,
+        CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var reports = selectedReports
@@ -184,9 +187,6 @@ internal static class DamageReportExportServiceV1416
             .ToList();
         var lastRow = reports.Count + 2;
         const int shiftColumn = 9;
-
-        using var wb = new XLWorkbook(path);
-        var ws = wb.Worksheet(1);
 
         // Expand title from A:H to A:I while keeping the image canvas in column H.
         ws.Range(1, 1, 1, 8).Unmerge();
@@ -234,9 +234,8 @@ internal static class DamageReportExportServiceV1416
 
         ws.PageSetup.PrintAreas.Clear();
         ws.PageSetup.PrintAreas.Add(1, 1, lastRow, shiftColumn);
-        wb.Save();
 
-        AppLog.Info("EXPORT_EXCEL_V1416_FORMAT_APPLIED", "Đã áp dụng định dạng Excel theo yêu cầu OWNER.", new Dictionary<string, object?>
+        AppLog.Info("EXPORT_EXCEL_V1416_FORMAT_APPLIED", "Đã áp dụng định dạng Excel theo yêu cầu OWNER trước lần lưu duy nhất.", new Dictionary<string, object?>
         {
             ["rows"] = reports.Count,
             ["font"] = "Aptos",

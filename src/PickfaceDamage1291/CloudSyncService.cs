@@ -22,6 +22,14 @@ internal static class CloudSyncService
     private const string ReportSeqKey = "report_change_seq";
     private const string ProductSeqKey = "product_change_seq";
     private static readonly SemaphoreSlim Gate = new(1, 1);
+    private static long _lastReportPullStamp;
+
+    private static bool IsReportPullFresh(TimeSpan maxAge)
+    {
+        if (maxAge <= TimeSpan.Zero) return false;
+        var stamp = Volatile.Read(ref _lastReportPullStamp);
+        return stamp > 0 && System.Diagnostics.Stopwatch.GetElapsedTime(stamp) <= maxAge;
+    }
 
     public static async Task<CloudSyncSummary> SyncNowAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -161,6 +169,34 @@ internal static class CloudSyncService
         }
     }
 
+    public static async Task<(int ReportsPulled, int ReportsDeleted, bool SkippedFresh)> PullReportsOnlyAsync(
+        IProgress<string>? progress = null,
+        TimeSpan? skipIfFreshFor = null,
+        CancellationToken ct = default)
+    {
+        if (!GoogleService.IsConnected())
+            throw new InvalidOperationException("Cần kết nối online để nhận dữ liệu phiếu dùng chung.");
+
+        await Gate.WaitAsync(ct);
+        try
+        {
+            SyncCacheStore.Initialize();
+            if (skipIfFreshFor is { } maxAge && IsReportPullFresh(maxAge))
+            {
+                progress?.Report("Dữ liệu phiếu vừa được kiểm tra, không cần nhận lại.");
+                return (0, 0, true);
+            }
+
+            progress?.Report("Đang kiểm tra dữ liệu phiếu mới từ Google...");
+            var reports = await PullReportsAsync(progress, ct);
+            return (reports.Applied, reports.Deleted, false);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
     public static async Task<int> PushLocalProductCatalogAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
         if (AppSession.Current?.Profile.IsAdmin != true)
@@ -238,6 +274,7 @@ internal static class CloudSyncService
             progress?.Report($"Đã nhận tới thay đổi phiếu #{cursor:N0}.");
             if (!page.HasMore) break;
         }
+        Volatile.Write(ref _lastReportPullStamp, System.Diagnostics.Stopwatch.GetTimestamp());
         return (applied, deleted, conflicts);
     }
 
