@@ -30,16 +30,18 @@ internal sealed class AuditControl : UserControl
             Text = "Lịch sử thao tác hệ thống",
             Dock = DockStyle.Top,
             AutoSize = false,
-            Height = 124,
+            Height = 150,
             Padding = new Padding(12)
         };
         var tools = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            AutoSize = false,
+            Height = 58,
+            MinimumSize = new Size(0, 58),
             WrapContents = true,
-            AutoScroll = false
+            AutoScroll = false,
+            Tag = "audit-actions-fixed-height"
         };
         var refresh = new Button { Text = "Làm mới", AutoSize = true, Height = 34, Padding = new Padding(8, 0, 8, 0) };
         refresh.Click += async (_, _) => await RefreshAsync(resetPaging: true);
