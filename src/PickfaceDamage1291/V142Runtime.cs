@@ -395,7 +395,7 @@ internal static class V142Runtime
                             if (hasPendingWrites)
                                 await CloudSyncService.SyncNowAsync(progress, ct);
                             else if (canRead)
-                                await CloudSyncService.PullSharedDataAsync(progress, ct);
+                                await CloudSyncService.PullReportsOnlyAsync(progress, TimeSpan.FromSeconds(30), ct);
 
                             BackgroundSyncCoordinator.EnqueuePending();
                             TaskProgressCenter.Complete(form, "network-recovery");
