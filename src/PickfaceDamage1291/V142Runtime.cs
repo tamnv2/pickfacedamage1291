@@ -132,6 +132,7 @@ internal static class V142Runtime
 
         private static readonly ConditionalWeakTable<Form, Host> Hosts = new();
         private static readonly Regex FractionRegex = new(@"(?<done>[\d\.,]+)\s*/\s*(?<total>[\d\.,]+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex PercentRegex = new(@"(?<percent>\d{1,3})\s*%", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         public static void Attach(Form form)
         {
@@ -246,6 +247,10 @@ internal static class V142Runtime
 
         private static int? ParsePercent(string text)
         {
+            var explicitPercent = PercentRegex.Match(text);
+            if (explicitPercent.Success && int.TryParse(explicitPercent.Groups["percent"].Value, out var parsed))
+                return Math.Clamp(parsed, 0, 100);
+
             var match = FractionRegex.Match(text);
             if (!match.Success) return null;
             if (!TryDigits(match.Groups["done"].Value, out var done) || !TryDigits(match.Groups["total"].Value, out var total) || total <= 0) return null;
@@ -290,9 +295,12 @@ internal static class V142Runtime
                 foreach (var task in tasks)
                 {
                     var row = new Panel { Width = 312, Height = 38, Margin = new Padding(0, 0, 0, 3) };
+                    var displayMessage = task.Percent.HasValue && !PercentRegex.IsMatch(task.Message)
+                        ? $"{task.Message} • {task.Percent.Value}%"
+                        : task.Message;
                     var label = new Label
                     {
-                        Text = task.Message,
+                        Text = displayMessage,
                         Dock = DockStyle.Top,
                         Height = 24,
                         AutoEllipsis = true,
