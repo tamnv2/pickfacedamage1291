@@ -54,6 +54,9 @@ Require-Text "$src/Program.cs" 'AppLog.CaptureCrash' 'Unhandled exceptions no lo
 Require-Text "$src/V142Runtime.cs" 'AppLog.TriggerAutoUpload();' 'Network recovery no longer retries retained log uploads.'
 Require-Text "$src/UiRuntimeFixes.cs" 'AppLog.TriggerAutoUpload();' 'Google reconnect no longer retries retained log uploads.'
 
+Require-Text "apps-script/GoogleGateway/Code.gs" "folder.getFilesByName(name).hasNext()" 'Drive log upload no longer resolves duplicate names safely.'
+Require-Text "apps-script/GoogleGateway/Code.gs" "original=sanitizeFilePart_" 'Drive log upload no longer preserves the client diagnostic filename.'
+
 Require-Text "$src/V1419Runtime.cs" 'PullReportsOnlyAsync' 'Information export regressed to a full SKU/report pull.'
 Require-Text "$src/V1420Runtime.cs" 'PullReportsOnlyAsync' 'BBBG v1420 regressed to a full SKU/report pull.'
 Require-Text "$src/V1427Runtime.cs" 'PullReportsOnlyAsync' 'BBBG v1427 regressed to a full SKU/report pull.'
