@@ -37,4 +37,25 @@ Forbid-Text "$src/V1416ExcelExport.cs" 'wb.Save();' 'Regression: Excel export pe
 Require-Text "$src/DamageReportExportV148.cs" 'beforeSave?.Invoke(wb, ws, reports, ct);' 'Missing in-memory Excel formatting hook before the single save.'
 Require-Text "$src/DamageReportExportV148.cs" 'EXPORT_EXCEL_PERF' 'Missing Excel stage performance telemetry.'
 
+Require-Text "$src/BbbgInventoryWordExporterV1419.cs" 'Hôm nay, ngày {entryDates[0]:dd/MM/yyyy}, vào lúc' 'BBBG no longer fills the actual entry date sentence.'
+Require-Text "$src/V1416ExcelExport.cs" 'shift_includes_entry_date' 'Multi-day information export no longer marks entry dates in the shift column.'
+Require-Text "$src/MainFormV3.cs" 'Thiết kế và phát triển bởi: tamnv2 - Chuyên viên Pick Pack 1291' 'Developer credit is missing from the main header.'
+Require-Text "$src/MainFormV3.cs" 'WindowState == FormWindowState.Maximized' 'Developer credit no longer hides outside full-screen mode.'
+
+Require-Text "$src/AppLog.cs" 'LocalRetention = TimeSpan.FromDays(7)' 'Local log retention is no longer seven days.'
+Require-Text "$src/AppLog.cs" 'MaxFileBytes = 2L * 1024 * 1024' 'Log rotation size changed from the approved 2 MB threshold.'
+Require-Text "$src/AppLog.cs" 'crash_' 'Crash logs no longer receive the crash_ prefix.'
+Require-Text "$src/AppLog.cs" 'machine_name' 'Log records no longer include the machine name.'
+Require-Text "$src/AppLog.cs" 'log_upload_state.json' 'Automatic log upload deduplication state is missing.'
+Forbid-Text "$src/AppLog.cs" 'LOG_UPLOAD_LOCAL_RESET' 'Regression: successful log upload deletes/resets local history.'
+Forbid-Text "$src/AppLog.cs" 'ResetForVersionIfNeededLocked' 'Regression: version update deletes local logs again.'
+Require-Text "$src/Program.cs" 'AppLog.BindSession(active.Profile.Username);' 'Log filenames are no longer bound to the signed-in username.'
+Require-Text "$src/Program.cs" 'AppLog.CaptureCrash' 'Unhandled exceptions no longer create crash logs.'
+Require-Text "$src/V142Runtime.cs" 'AppLog.TriggerAutoUpload();' 'Network recovery no longer retries retained log uploads.'
+Require-Text "$src/UiRuntimeFixes.cs" 'AppLog.TriggerAutoUpload();' 'Google reconnect no longer retries retained log uploads.'
+
+Require-Text "$src/V1419Runtime.cs" 'PullReportsOnlyAsync' 'Information export regressed to a full SKU/report pull.'
+Require-Text "$src/V1420Runtime.cs" 'PullReportsOnlyAsync' 'BBBG v1420 regressed to a full SKU/report pull.'
+Require-Text "$src/V1427Runtime.cs" 'PullReportsOnlyAsync' 'BBBG v1427 regressed to a full SKU/report pull.'
+
 Write-Host 'cumulative regression probe PASS'
