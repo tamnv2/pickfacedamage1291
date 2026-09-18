@@ -111,6 +111,7 @@ internal static class UiRuntimeFixes
             }
 
             SetGoogleHeader(form, "Google: đã kết nối");
+            AppLog.TriggerAutoUpload();
 
             if (session.Profile.IsAdmin || session.Profile.HasPermission("sync_google"))
             {

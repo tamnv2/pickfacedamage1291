@@ -7,6 +7,7 @@ internal sealed class MainForm : Form
     private readonly TabControl _tabs = new();
     private readonly Label _headerCloud = new();
     private readonly Label _headerVersion = new();
+    private readonly Label _headerCredit = new();
 
     private readonly TextBox _sku = new();
     private readonly TextBox _productName = new();
@@ -61,6 +62,8 @@ internal sealed class MainForm : Form
         _tabs.SelectedIndexChanged += (_, _) => RefreshActiveTab();
         root.Controls.Add(_tabs, 0, 1);
         Controls.Add(root);
+        Resize += (_, _) => UpdateHeaderCreditVisibility();
+        Shown += (_, _) => UpdateHeaderCreditVisibility();
 
         ResetDraft();
         RefreshProducts();
@@ -71,16 +74,34 @@ internal sealed class MainForm : Form
     private Control BuildHeader()
     {
         var panel = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 10, 20, 8), ColumnCount = 3, BackColor = Color.White };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 27));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 18));
-        panel.Controls.Add(new Label
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12));
+        var brand = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+        brand.Controls.Add(new Label
         {
             Text = "CẬP NHẬT HƯ HỎNG PICKFACE 1291",
             AutoSize = true,
             Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold),
-            Padding = new Padding(0, 7, 0, 0)
-        }, 0, 0);
+            Padding = new Padding(0, 7, 0, 0),
+            Margin = Padding.Empty
+        });
+        _headerCredit.Text = " | Thiết kế và phát triển bởi: tamnv2 - Chuyên viên Pick Pack 1291";
+        _headerCredit.AutoSize = true;
+        _headerCredit.Font = new Font("Segoe UI", 9F, FontStyle.Regular);
+        _headerCredit.ForeColor = Color.DimGray;
+        _headerCredit.Padding = new Padding(0, 13, 0, 0);
+        _headerCredit.Margin = Padding.Empty;
+        brand.Controls.Add(_headerCredit);
+        panel.Controls.Add(brand, 0, 0);
         _headerCloud.Dock = DockStyle.Fill;
         _headerCloud.TextAlign = ContentAlignment.MiddleRight;
         _headerVersion.Dock = DockStyle.Fill;
@@ -88,6 +109,12 @@ internal sealed class MainForm : Form
         panel.Controls.Add(_headerCloud, 1, 0);
         panel.Controls.Add(_headerVersion, 2, 0);
         return panel;
+    }
+
+    private void UpdateHeaderCreditVisibility()
+    {
+        if (_headerCredit.IsDisposed) return;
+        _headerCredit.Visible = WindowState == FormWindowState.Maximized;
     }
 
     private TabPage BuildDamageTab()

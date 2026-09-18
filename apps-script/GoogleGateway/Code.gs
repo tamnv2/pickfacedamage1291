@@ -959,12 +959,25 @@ function uploadLogV140_(auth,payload) {
   let text=Utilities.newBlob(bytes).getDataAsString('UTF-8');
   text=sanitizeLogV140_(text);
   bytes=Utilities.newBlob(text,'text/plain').getBytes();
-  const stamp=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss');
-  const user=sanitizeFilePart_(String(auth.profile.username||'user')) || 'user';
-  const device=sanitizeFilePart_(String(payload.device_id||'device')).substring(0,24) || 'device';
+
+  // The desktop app already creates a diagnostic name containing user, machine,
+  // app version and log creation time. Preserve that name on Drive so crash_
+  // remains a real prefix and the file is easy to identify.
   let original=sanitizeFilePart_(String(payload.file_name||'app.log')) || 'app.log';
   if(!original.toLowerCase().endsWith('.log')) original += '.log';
-  const name=(stamp+'_'+user+'_'+device+'_'+original).substring(0,220);
+  original=original.substring(0,220);
+
+  const dot=original.toLowerCase().lastIndexOf('.log');
+  const stem=dot>=0 ? original.substring(0,dot) : original;
+  const ext='.log';
+  let name=stem+ext;
+  let version=1;
+  while(folder.getFilesByName(name).hasNext()) {
+    name=(stem+'_v'+version+ext).substring(0,220);
+    version++;
+    if(version>9999) throw new Error('Không thể tạo tên log không trùng trên Drive.');
+  }
+
   const file=folder.createFile(Utilities.newBlob(bytes,'text/plain',name));
   return {file_id:file.getId(),url:file.getUrl(),name:file.getName(),size:bytes.length};
 }

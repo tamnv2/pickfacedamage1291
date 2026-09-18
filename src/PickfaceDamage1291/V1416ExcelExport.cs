@@ -168,7 +168,8 @@ internal static class DamageReportExportServiceV1416
             (wb, ws, reports, token) =>
             {
                 progress?.Report("Đang hoàn thiện định dạng Excel...");
-                ApplyOwnerFormat(wb, ws, reports, token);
+                var multipleEntryDates = selectedEntryDates.Select(x => x.Date).Distinct().Count() > 1;
+                ApplyOwnerFormat(wb, ws, reports, multipleEntryDates, token);
             });
     }
 
@@ -176,6 +177,7 @@ internal static class DamageReportExportServiceV1416
         XLWorkbook wb,
         IXLWorksheet ws,
         IReadOnlyList<DamageReport> selectedReports,
+        bool multipleEntryDates,
         CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -201,7 +203,10 @@ internal static class DamageReportExportServiceV1416
         {
             ct.ThrowIfCancellationRequested();
             var row = i + 3;
-            ws.Cell(row, shiftColumn).Value = reports[i].Shift;
+            var shiftValue = reports[i].Shift;
+            if (multipleEntryDates)
+                shiftValue = $"{shiftValue} - {reports[i].CreatedAt.ToLocalTime():dd/MM/yyyy}";
+            ws.Cell(row, shiftColumn).Value = shiftValue;
             ws.Cell(row, shiftColumn).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             ws.Cell(row, shiftColumn).Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
             ws.Cell(row, shiftColumn).Style.Alignment.WrapText = true;
@@ -242,7 +247,8 @@ internal static class DamageReportExportServiceV1416
             ["font_size"] = 14,
             ["title_size"] = 25,
             ["shift_column"] = shiftColumn,
-            ["gridlines"] = false
+            ["gridlines"] = false,
+            ["shift_includes_entry_date"] = multipleEntryDates
         });
     }
 

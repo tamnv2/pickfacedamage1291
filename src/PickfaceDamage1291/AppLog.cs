@@ -5,14 +5,27 @@ namespace PickfaceDamage1291;
 
 internal static partial class AppLog
 {
-    private const long MaxFileBytes = 4L * 1024 * 1024;
+    // 2 MB keeps each upload comfortably below the 8 MB gateway limit while avoiding
+    // very small files that would cause unnecessary Drive traffic.
+    private const long MaxFileBytes = 2L * 1024 * 1024;
+    private static readonly TimeSpan MaxOpenFileAge = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan LocalRetention = TimeSpan.FromDays(7);
+    private static readonly TimeSpan AutoSweepInterval = TimeSpan.FromMinutes(5);
+
     private static readonly object Gate = new();
+    private static readonly SemaphoreSlim UploadGate = new(1, 1);
     private static readonly DateTime ProcessStartedAt = DateTime.Now;
+
     private static bool _initialized;
     private static string? _currentWritablePath;
+    private static DateTime _currentFileCreatedAt;
     private static int _partIndex = 1;
-    private static int _oldLogsRemovedOnVersionChange;
-    private static string VersionMarkerPath => Path.Combine(AppPaths.Data, "log_version.txt");
+    private static string _boundUsername = "prelogin";
+    private static System.Threading.Timer? _autoTimer;
+    private static bool _autoStarted;
+    private static Dictionary<string, string>? _uploadedSignatures;
+
+    private static string UploadStatePath => Path.Combine(AppPaths.Data, "log_upload_state.json");
 
     [GeneratedRegex("(?i)(authorization\\s*[:=]\\s*bearer\\s+)[^\\s,;]+")]
     private static partial Regex BearerRegex();
@@ -28,20 +41,104 @@ internal static partial class AppLog
 
     public static void Initialize()
     {
+        int expiredRemoved;
+        int legacyRecovered;
         lock (Gate)
         {
             if (_initialized) return;
             AppPaths.EnsureCreated();
             Directory.CreateDirectory(AppPaths.Logs);
-            _oldLogsRemovedOnVersionChange = ResetForVersionIfNeededLocked();
+            legacyRecovered = RecoverLegacySendFilesLocked();
+            expiredRemoved = CleanupExpiredLogsLocked();
+            LoadUploadStateLocked();
             _initialized = true;
         }
+
         Info("APP_LOG_READY", "Hệ thống log local realtime đã sẵn sàng.", new Dictionary<string, object?>
         {
             ["process_started_at"] = ProcessStartedAt,
             ["log_file"] = Path.GetFileName(GetCurrentWritablePathForInfo()),
-            ["old_logs_removed_after_update"] = _oldLogsRemovedOnVersionChange
+            ["expired_logs_removed"] = expiredRemoved,
+            ["legacy_send_files_recovered"] = legacyRecovered,
+            ["local_retention_days"] = (int)LocalRetention.TotalDays,
+            ["rotation_mb"] = MaxFileBytes / 1024 / 1024
         });
+    }
+
+    public static void BindSession(string? username)
+    {
+        Initialize();
+        string? sealedPath = null;
+        lock (Gate)
+        {
+            var next = SafeFilePart(username ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(next)) next = "unknown-user";
+            if (!string.Equals(_boundUsername, next, StringComparison.OrdinalIgnoreCase))
+            {
+                sealedPath = SealCurrentLocked(crash: false);
+                _boundUsername = next;
+            }
+            CleanupExpiredLogsLocked();
+        }
+
+        StartAutoUpload();
+        if (!string.IsNullOrWhiteSpace(sealedPath)) TriggerAutoUpload();
+        TriggerAutoUpload();
+    }
+
+    public static void TriggerAutoUpload()
+    {
+        Initialize();
+        if (!CanUploadNow()) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await SealAgedFileIfNeededAsync();
+                await UploadPendingAsync(null, CancellationToken.None);
+            }
+            catch
+            {
+                // Auto upload is best-effort. Local files remain for a later retry/manual send.
+            }
+        });
+    }
+
+    public static void CaptureCrash(string eventName, Exception? exception, string? message = null, bool waitForUpload = false)
+    {
+        try
+        {
+            if (exception is not null)
+                Write("ERROR", eventName, message ?? exception.Message, null, exception);
+            else
+                Write("ERROR", eventName, message ?? "Ứng dụng kết thúc bất thường.", null, null);
+
+            string? crashPath;
+            lock (Gate)
+                crashPath = SealCurrentLocked(crash: true);
+
+            if (string.IsNullOrWhiteSpace(crashPath)) return;
+
+            if (waitForUpload && CanUploadNow())
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    UploadSpecificAsync(crashPath, cts.Token).GetAwaiter().GetResult();
+                    return;
+                }
+                catch
+                {
+                    // Keep the crash file locally. Next online session/manual send will retry.
+                }
+            }
+
+            TriggerAutoUpload();
+        }
+        catch
+        {
+            // Crash diagnostics must never throw back into the failing process.
+        }
     }
 
     public static void Info(string eventName, string message, IReadOnlyDictionary<string, object?>? details = null)
@@ -61,6 +158,7 @@ internal static partial class AppLog
         Initialize();
         lock (Gate)
         {
+            CleanupExpiredLogsLocked();
             var files = EnumerateLogFilesLocked().ToList();
             return (files.Count, files.Sum(x => x.Length));
         }
@@ -69,108 +167,179 @@ internal static partial class AppLog
     public static async Task<int> UploadAllAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
         Initialize();
-        if (!GoogleService.IsConnected())
+        if (!CanUploadNow())
             throw new InvalidOperationException("Cần đăng nhập online và kết nối Google để gửi logs.");
 
-        List<FileInfo> files;
+        // Manual send seals the current file first, so the uploaded copy is immutable while
+        // gateway diagnostics continue in a newly-created file.
         lock (Gate)
-        {
-            foreach (var file in Directory.EnumerateFiles(AppPaths.Logs, "*.log", SearchOption.TopDirectoryOnly).ToList())
-            {
-                try
-                {
-                    var sealedPath = file + ".send";
-                    if (File.Exists(sealedPath))
-                        sealedPath = file + "." + Guid.NewGuid().ToString("N") + ".send";
-                    File.Move(file, sealedPath);
-                    if (string.Equals(_currentWritablePath, file, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _currentWritablePath = null;
-                        _partIndex++;
-                    }
-                }
-                catch
-                {
-                    // A file that cannot be sealed remains local and is never deleted.
-                }
-            }
-            files = EnumerateLogFilesLocked().Where(x => x.Extension.Equals(".send", StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.CreationTimeUtc).ToList();
-        }
+            SealCurrentLocked(crash: false);
 
-        if (files.Count == 0)
-        {
-            progress?.Report("Không có file log chờ gửi.");
-            return 0;
-        }
-
-        var sent = 0;
-        for (var i = 0; i < files.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var file = files[i];
-            progress?.Report($"Đang gửi log {i + 1}/{files.Count}: {DisplayUploadName(file.Name)}");
-            byte[] bytes;
-            lock (Gate)
-                bytes = File.ReadAllBytes(file.FullName);
-
-            await GoogleGatewayV140.UploadLogAsync(DisplayUploadName(file.Name), bytes, ct);
-
-            lock (Gate)
-            {
-                if (File.Exists(file.FullName)) File.Delete(file.FullName);
-            }
-            sent++;
-        }
-
-        Info("LOG_UPLOAD_LOCAL_RESET", "Đã gửi log lên Drive; log cũ đã được xoá và bắt đầu chu kỳ log local mới.",
+        var sent = await UploadPendingAsync(progress, ct);
+        Info("LOG_UPLOAD_COMPLETE", "Đã gửi các file log mới/thay đổi lên Drive và vẫn giữ bản local 7 ngày.",
             new Dictionary<string, object?> { ["sent_files"] = sent });
-        progress?.Report($"Đã gửi thành công {sent:N0} file log. Log cũ đã được xoá; ứng dụng đang ghi vào file log mới.");
+        progress?.Report(sent == 0
+            ? "Không có file log mới/thay đổi cần gửi."
+            : $"Đã gửi {sent:N0} file log. Bản local được giữ 7 ngày.");
         return sent;
     }
 
-    private static int ResetForVersionIfNeededLocked()
+    public static async Task<bool> FlushCurrentAsync(TimeSpan timeout)
     {
-        var current = VersionUpdateService.CurrentVersionText.Trim();
-        var previous = string.Empty;
+        Initialize();
+        string? sealedPath;
+        lock (Gate)
+            sealedPath = SealCurrentLocked(crash: false);
+
+        if (string.IsNullOrWhiteSpace(sealedPath)) return true;
+        if (!CanUploadNow()) return false;
+
         try
         {
-            if (File.Exists(VersionMarkerPath))
-                previous = File.ReadAllText(VersionMarkerPath).Trim();
+            using var cts = new CancellationTokenSource(timeout);
+            return await UploadSpecificAsync(sealedPath, cts.Token);
         }
         catch
         {
-            previous = string.Empty;
+            // Keep the sealed file locally; next online session/manual send will retry.
+            return false;
         }
+    }
 
-        if (string.Equals(previous, current, StringComparison.OrdinalIgnoreCase)) return 0;
-
-        var deleted = 0;
-        foreach (var path in Directory.EnumerateFiles(AppPaths.Logs, "*", SearchOption.TopDirectoryOnly).ToList())
+    private static void StartAutoUpload()
+    {
+        lock (Gate)
         {
-            if (!path.EndsWith(".log", StringComparison.OrdinalIgnoreCase) &&
-                !path.EndsWith(".send", StringComparison.OrdinalIgnoreCase)) continue;
-            try
+            if (_autoStarted) return;
+            _autoStarted = true;
+            _autoTimer = new System.Threading.Timer(
+                _ => TriggerAutoUpload(),
+                null,
+                TimeSpan.FromMinutes(1),
+                AutoSweepInterval);
+        }
+    }
+
+    private static async Task SealAgedFileIfNeededAsync()
+    {
+        string? sealedPath = null;
+        lock (Gate)
+        {
+            CleanupExpiredLogsLocked();
+            if (!string.IsNullOrWhiteSpace(_currentWritablePath) &&
+                File.Exists(_currentWritablePath) &&
+                _currentFileCreatedAt != default &&
+                DateTime.Now - _currentFileCreatedAt >= MaxOpenFileAge)
             {
-                File.Delete(path);
-                deleted++;
-            }
-            catch
-            {
-                // A locked diagnostic file is left untouched; logging must never block startup.
+                sealedPath = SealCurrentLocked(crash: false);
             }
         }
 
-        _currentWritablePath = null;
-        _partIndex = 1;
+        if (!string.IsNullOrWhiteSpace(sealedPath))
+            await UploadPendingAsync(null, CancellationToken.None);
+    }
+
+    private static async Task<int> UploadPendingAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        if (!CanUploadNow()) return 0;
+
+        await UploadGate.WaitAsync(ct);
         try
         {
-            File.WriteAllText(VersionMarkerPath, current, new System.Text.UTF8Encoding(false));
+            List<FileInfo> files;
+            string? current;
+            lock (Gate)
+            {
+                CleanupExpiredLogsLocked();
+                current = _currentWritablePath;
+                files = EnumerateLogFilesLocked()
+                    .Where(x => !string.Equals(x.FullName, current, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(x => x.CreationTimeUtc)
+                    .ToList();
+            }
+
+            var sent = 0;
+            var candidates = new List<FileInfo>();
+            lock (Gate)
+            {
+                LoadUploadStateLocked();
+                foreach (var file in files)
+                {
+                    var signature = FileSignature(file);
+                    if (_uploadedSignatures!.TryGetValue(file.Name, out var old) &&
+                        string.Equals(old, signature, StringComparison.Ordinal))
+                        continue;
+                    candidates.Add(file);
+                }
+            }
+
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var file = candidates[i];
+                progress?.Report($"Đang gửi log {i + 1}/{candidates.Count}: {file.Name}");
+                if (await UploadSpecificCoreAsync(file.FullName, ct)) sent++;
+            }
+
+            return sent;
+        }
+        finally
+        {
+            UploadGate.Release();
+        }
+    }
+
+    private static async Task<bool> UploadSpecificAsync(string path, CancellationToken ct)
+    {
+        await UploadGate.WaitAsync(ct);
+        try
+        {
+            return await UploadSpecificCoreAsync(path, ct);
+        }
+        finally
+        {
+            UploadGate.Release();
+        }
+    }
+
+    private static async Task<bool> UploadSpecificCoreAsync(string path, CancellationToken ct)
+    {
+        if (!CanUploadNow() || string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
+
+        byte[] bytes;
+        FileInfo snapshot;
+        lock (Gate)
+        {
+            snapshot = new FileInfo(path);
+            if (snapshot.Length <= 0) return false;
+            bytes = File.ReadAllBytes(path);
+        }
+
+        await GoogleGatewayV140.UploadLogAsync(snapshot.Name, bytes, ct);
+
+        lock (Gate)
+        {
+            LoadUploadStateLocked();
+            if (File.Exists(path))
+            {
+                var after = new FileInfo(path);
+                _uploadedSignatures![after.Name] = FileSignature(after);
+                SaveUploadStateLocked();
+            }
+        }
+        return true;
+    }
+
+    private static bool CanUploadNow()
+    {
+        try
+        {
+            return AppSession.Current is { OfflineMode: false } && GoogleService.IsConnected();
         }
         catch
         {
-            // Marker failure only means the next startup may retry cleanup.
+            return false;
         }
-        return deleted;
     }
 
     private static void Write(
@@ -180,6 +349,7 @@ internal static partial class AppLog
         IReadOnlyDictionary<string, object?>? details,
         Exception? exception)
     {
+        string? sealedPath = null;
         try
         {
             if (!_initialized)
@@ -211,6 +381,7 @@ internal static partial class AppLog
                 ["message"] = SanitizeText(message),
                 ["username"] = SanitizeText(username, 200),
                 ["device_id"] = SafeDeviceId(),
+                ["machine_name"] = SanitizeText(Environment.MachineName, 200),
                 ["version"] = VersionUpdateService.CurrentVersionText,
                 ["details"] = safeDetails.Count == 0 ? null : safeDetails
             };
@@ -225,69 +396,217 @@ internal static partial class AppLog
             var line = JsonSerializer.Serialize(entry) + Environment.NewLine;
             lock (Gate)
             {
-                var path = WritablePathLocked();
+                var path = WritablePathLocked(out var agedPath);
+                if (!string.IsNullOrWhiteSpace(agedPath)) sealedPath = agedPath;
                 File.AppendAllText(path, line, new System.Text.UTF8Encoding(false));
+
+                if (new FileInfo(path).Length >= MaxFileBytes)
+                    sealedPath = SealCurrentLocked(crash: false);
             }
         }
         catch
         {
             // Diagnostics must never block the business flow.
         }
+
+        if (!string.IsNullOrWhiteSpace(sealedPath)) TriggerAutoUpload();
     }
 
     private static IEnumerable<FileInfo> EnumerateLogFilesLocked()
     {
         if (!Directory.Exists(AppPaths.Logs)) yield break;
-        foreach (var path in Directory.EnumerateFiles(AppPaths.Logs, "*", SearchOption.TopDirectoryOnly))
-        {
-            if (!path.EndsWith(".log", StringComparison.OrdinalIgnoreCase) &&
-                !path.EndsWith(".send", StringComparison.OrdinalIgnoreCase)) continue;
+        foreach (var path in Directory.EnumerateFiles(AppPaths.Logs, "*.log", SearchOption.TopDirectoryOnly))
             yield return new FileInfo(path);
-        }
     }
 
-    private static string WritablePathLocked()
+    private static string WritablePathLocked(out string? sealedPath)
     {
+        sealedPath = null;
+        if (!string.IsNullOrWhiteSpace(_currentWritablePath) &&
+            File.Exists(_currentWritablePath) &&
+            _currentFileCreatedAt != default &&
+            DateTime.Now - _currentFileCreatedAt >= MaxOpenFileAge)
+        {
+            sealedPath = SealCurrentLocked(crash: false);
+        }
+
         if (string.IsNullOrWhiteSpace(_currentWritablePath))
-            _currentWritablePath = BuildProcessLogPath(_partIndex);
+        {
+            _currentFileCreatedAt = DateTime.Now;
+            _currentWritablePath = BuildProcessLogPath(_partIndex, _currentFileCreatedAt);
+        }
 
-        if (!File.Exists(_currentWritablePath) || new FileInfo(_currentWritablePath).Length < MaxFileBytes)
-            return _currentWritablePath;
-
-        _partIndex++;
-        _currentWritablePath = BuildProcessLogPath(_partIndex);
         return _currentWritablePath;
     }
 
-    private static string BuildProcessLogPath(int partIndex)
+    private static string? SealCurrentLocked(bool crash)
     {
-        var device = SafeFilePart(SafeDeviceId());
-        var prefix = $"pickface_{ProcessStartedAt:yyyyMMdd_HHmmss_fff}_{device}";
+        if (string.IsNullOrWhiteSpace(_currentWritablePath) || !File.Exists(_currentWritablePath))
+        {
+            _currentWritablePath = null;
+            _currentFileCreatedAt = default;
+            return null;
+        }
+
+        var path = _currentWritablePath;
+        _currentWritablePath = null;
+        _currentFileCreatedAt = default;
+        _partIndex++;
+
+        if (!crash) return path;
+
+        var directory = Path.GetDirectoryName(path) ?? AppPaths.Logs;
+        var crashName = "crash_" + Path.GetFileName(path);
+        var crashPath = UniqueLocalPath(directory, crashName);
+        try
+        {
+            File.Move(path, crashPath);
+            return crashPath;
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
+    private static string BuildProcessLogPath(int partIndex, DateTime createdAt)
+    {
+        var user = SafeFilePart(_boundUsername);
+        var machine = SafeFilePart(Environment.MachineName);
+        var version = SafeFilePart(VersionUpdateService.CurrentVersionText);
         var suffix = partIndex <= 1 ? string.Empty : $"_part{partIndex:00}";
-        return Path.Combine(AppPaths.Logs, prefix + suffix + ".log");
+        var name = $"pickface_{user}_{machine}_{version}_{createdAt:yyyyMMdd_HHmmss_fff}_p{Environment.ProcessId}{suffix}.log";
+        return UniqueLocalPath(AppPaths.Logs, name);
+    }
+
+    private static string UniqueLocalPath(string directory, string fileName)
+    {
+        var path = Path.Combine(directory, fileName);
+        if (!File.Exists(path)) return path;
+
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var ext = Path.GetExtension(fileName);
+        for (var i = 1; i < 10000; i++)
+        {
+            var candidate = Path.Combine(directory, $"{stem}_v{i}{ext}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+
+        return Path.Combine(directory, $"{stem}_{Guid.NewGuid():N}{ext}");
     }
 
     private static string GetCurrentWritablePathForInfo()
     {
         lock (Gate)
-            return WritablePathLocked();
+            return WritablePathLocked(out _);
     }
+
+    private static int CleanupExpiredLogsLocked()
+    {
+        if (!Directory.Exists(AppPaths.Logs)) return 0;
+        var cutoff = DateTime.UtcNow - LocalRetention;
+        var removed = 0;
+
+        foreach (var path in Directory.EnumerateFiles(AppPaths.Logs, "*", SearchOption.TopDirectoryOnly).ToList())
+        {
+            if (!path.EndsWith(".log", StringComparison.OrdinalIgnoreCase) &&
+                !path.EndsWith(".send", StringComparison.OrdinalIgnoreCase)) continue;
+
+            try
+            {
+                var info = new FileInfo(path);
+                var ageBasis = info.LastWriteTimeUtc > info.CreationTimeUtc ? info.LastWriteTimeUtc : info.CreationTimeUtc;
+                if (ageBasis >= cutoff) continue;
+                if (string.Equals(path, _currentWritablePath, StringComparison.OrdinalIgnoreCase)) continue;
+                File.Delete(path);
+                removed++;
+            }
+            catch
+            {
+                // Retention cleanup is best-effort.
+            }
+        }
+
+        if (_uploadedSignatures is not null)
+        {
+            var existing = Directory.EnumerateFiles(AppPaths.Logs, "*.log", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in _uploadedSignatures.Keys.Where(x => !existing.Contains(x)).ToList())
+                _uploadedSignatures.Remove(key);
+            SaveUploadStateLocked();
+        }
+
+        return removed;
+    }
+
+    private static int RecoverLegacySendFilesLocked()
+    {
+        if (!Directory.Exists(AppPaths.Logs)) return 0;
+        var recovered = 0;
+        foreach (var path in Directory.EnumerateFiles(AppPaths.Logs, "*.send", SearchOption.TopDirectoryOnly).ToList())
+        {
+            try
+            {
+                var basePath = path[..^5];
+                if (!basePath.EndsWith(".log", StringComparison.OrdinalIgnoreCase)) basePath += ".log";
+                var target = UniqueLocalPath(Path.GetDirectoryName(basePath) ?? AppPaths.Logs, Path.GetFileName(basePath));
+                File.Move(path, target);
+                recovered++;
+            }
+            catch
+            {
+                // Keep legacy file untouched if it cannot be recovered safely.
+            }
+        }
+        return recovered;
+    }
+
+    private static void LoadUploadStateLocked()
+    {
+        if (_uploadedSignatures is not null) return;
+        try
+        {
+            _uploadedSignatures = File.Exists(UploadStatePath)
+                ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(UploadStatePath))
+                  ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            _uploadedSignatures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (_uploadedSignatures.Comparer != StringComparer.OrdinalIgnoreCase)
+            _uploadedSignatures = new Dictionary<string, string>(_uploadedSignatures, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void SaveUploadStateLocked()
+    {
+        if (_uploadedSignatures is null) return;
+        try
+        {
+            Directory.CreateDirectory(AppPaths.Data);
+            var temp = UploadStatePath + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(_uploadedSignatures), new System.Text.UTF8Encoding(false));
+            File.Move(temp, UploadStatePath, true);
+        }
+        catch
+        {
+            // Upload state failure only causes a later harmless re-upload; never delete logs.
+        }
+    }
+
+    private static string FileSignature(FileInfo file)
+        => $"{file.Length}:{file.LastWriteTimeUtc.Ticks}";
 
     private static string SafeFilePart(string value)
     {
         var invalid = Path.GetInvalidFileNameChars();
-        var chars = (value ?? string.Empty).Select(c => invalid.Contains(c) ? '-' : c).ToArray();
-        var safe = new string(chars).Trim().Trim('.');
-        return string.IsNullOrWhiteSpace(safe) ? "unknown-device" : safe;
-    }
-
-    private static string DisplayUploadName(string sealedName)
-    {
-        var name = sealedName;
-        if (name.EndsWith(".send", StringComparison.OrdinalIgnoreCase)) name = name[..^5];
-        var marker = name.LastIndexOf(".log.", StringComparison.OrdinalIgnoreCase);
-        if (marker >= 0) name = name[..(marker + 4)];
-        return name.EndsWith(".log", StringComparison.OrdinalIgnoreCase) ? name : name + ".log";
+        var chars = (value ?? string.Empty).Select(c => invalid.Contains(c) || char.IsWhiteSpace(c) ? '-' : c).ToArray();
+        var safe = new string(chars).Trim().Trim('.', '-');
+        return string.IsNullOrWhiteSpace(safe) ? "unknown" : safe;
     }
 
     private static object? SanitizeValue(object? value)

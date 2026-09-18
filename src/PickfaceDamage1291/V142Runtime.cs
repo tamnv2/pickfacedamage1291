@@ -398,6 +398,7 @@ internal static class V142Runtime
                                 await CloudSyncService.PullReportsOnlyAsync(progress, TimeSpan.FromSeconds(30), ct);
 
                             BackgroundSyncCoordinator.EnqueuePending();
+                            AppLog.TriggerAutoUpload();
                             TaskProgressCenter.Complete(form, "network-recovery");
                             AppLog.Info("NETWORK_RECOVERY_OK", "Đã khôi phục kết nối Google sau khi Windows đổi mạng.");
                             return;

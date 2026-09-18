@@ -66,7 +66,7 @@ internal sealed class LogsControl : UserControl
         {
             AutoSize = true,
             MaximumSize = new Size(1050, 0),
-            Text = "Ứng dụng ghi các sự kiện vận hành, đồng bộ và lỗi kỹ thuật để hỗ trợ chẩn đoán. Password, token, Authorization, cookie, credential và chuỗi xác thực được loại/redact trước khi ghi. Khi gửi thành công, file đã gửi được xoá khỏi máy và lưu trực tiếp trong thư mục Logs thuộc CẬP NHẬT HƯ HỎNG PICKFACE."
+            Text = "Ứng dụng ghi các sự kiện vận hành, đồng bộ và lỗi kỹ thuật để hỗ trợ chẩn đoán. Password, token, Authorization, cookie, credential và chuỗi xác thực được loại/redact trước khi ghi. Log được tự động gửi khi file hoàn tất/được xoay và vẫn giữ local trong 7 ngày."
         };
 
         _status.AutoSize = true;
@@ -106,7 +106,7 @@ internal sealed class LogsControl : UserControl
             AutoSize = true,
             MaximumSize = new Size(1050, 0),
             ForeColor = Color.DimGray,
-            Text = "Chỉ xoá file local sau khi Drive xác nhận upload thành công. File gửi lỗi vẫn được giữ nguyên trên máy để gửi lại."
+            Text = "Log local không bị xoá sau khi gửi hoặc khi cập nhật phiên bản. Ứng dụng chỉ tự xoá log local quá 7 ngày; thư mục Logs trên Drive không bị tự động xoá."
         };
 
         root.Controls.Add(description, 0, 0);
@@ -141,7 +141,7 @@ internal sealed class LogsControl : UserControl
             var sent = await AppLog.UploadAllAsync(progress);
             RefreshStatus();
             MessageBox.Show(this,
-                sent == 0 ? "Không có file log chờ gửi." : $"Đã gửi {sent:N0} file log lên Drive. Các file đã gửi thành công đã được xoá khỏi máy.",
+                sent == 0 ? "Không có file log mới/thay đổi cần gửi." : $"Đã gửi {sent:N0} file log lên Drive. Bản local vẫn được giữ trong 7 ngày.",
                 "Logs",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);

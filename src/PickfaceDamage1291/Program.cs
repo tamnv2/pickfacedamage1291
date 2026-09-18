@@ -64,6 +64,7 @@ internal static class Program
 
             if (AppSession.Current is { } active)
             {
+                AppLog.BindSession(active.Profile.Username);
                 AppLog.Info("SESSION_ACTIVE", "Phiên ứng dụng đã sẵn sàng.", new Dictionary<string, object?>
                 {
                     ["username"] = active.Profile.Username,
@@ -122,11 +123,16 @@ internal static class Program
     private static void AttachUnhandledLogging()
     {
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-        Application.ThreadException += (_, e) => AppLog.Exception("UI_UNHANDLED_EXCEPTION", e.Exception);
+        Application.ThreadException += (_, e) =>
+        {
+            AppLog.CaptureCrash("UI_UNHANDLED_EXCEPTION", e.Exception, waitForUpload: false);
+        };
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
-            if (e.ExceptionObject is Exception ex) AppLog.Exception("DOMAIN_UNHANDLED_EXCEPTION", ex);
-            else AppLog.Error("DOMAIN_UNHANDLED_EXCEPTION", Convert.ToString(e.ExceptionObject) ?? "Unknown unhandled exception");
+            if (e.ExceptionObject is Exception ex)
+                AppLog.CaptureCrash("DOMAIN_UNHANDLED_EXCEPTION", ex, waitForUpload: e.IsTerminating);
+            else
+                AppLog.CaptureCrash("DOMAIN_UNHANDLED_EXCEPTION", null, Convert.ToString(e.ExceptionObject) ?? "Unknown unhandled exception", e.IsTerminating);
         };
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
@@ -209,6 +215,14 @@ internal static class Program
                 ["elapsed_ms"] = cleanup.ElapsedMilliseconds,
                 ["remote_logout_audit_wait"] = false
             });
+            try
+            {
+                AppLog.FlushCurrentAsync(TimeSpan.FromSeconds(6)).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // Log remains local and will retry automatically on the next online session.
+            }
             if (manager is not null)
             {
                 try { manager.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
