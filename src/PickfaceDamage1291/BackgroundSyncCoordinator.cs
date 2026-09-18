@@ -118,7 +118,11 @@ internal static class BackgroundSyncCoordinator
             catch (SyncConflictException ex)
             {
                 Publish(new BackgroundSyncState(reportId, report.Sku, 100, $"SKU {report.Sku} có xung đột phiên bản.", Math.Max(0, QueueCount - 1), true, true, true));
-                NotificationCenter.Show(null, ex.Message, "Xung đột đồng bộ", MessageBoxIcon.Warning);
+                NotificationCenter.Show(
+                    null,
+                    ex.Message + "\n\nCách xử lý: mở Danh sách đã nhập → chọn phiếu có trạng thái Xung đột → bấm Xử lý xung đột.",
+                    "Xung đột đồng bộ",
+                    MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
