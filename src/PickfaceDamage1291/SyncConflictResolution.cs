@@ -47,10 +47,27 @@ internal static class SyncConflictResolver
         if (local is not null)
             Database.SetReportStatus(remote.ReportId, "SYNCED");
 
-        var result = SyncCacheStore.ApplyRemoteReport(remote);
-        if (result == RemoteApplyResult.Conflict)
-            throw new InvalidOperationException("Bản Google chưa thể áp dụng. Xung đột được giữ nguyên để tránh mất dữ liệu.");
-        return result;
+        try
+        {
+            var result = SyncCacheStore.ApplyRemoteReport(remote);
+            if (result == RemoteApplyResult.Conflict)
+            {
+                if (local is not null)
+                    SyncCacheStore.MarkConflict(
+                        remote.ReportId,
+                        local.LastError ?? "Bản Google chưa thể áp dụng. Xung đột được giữ nguyên để tránh mất dữ liệu.");
+                throw new InvalidOperationException("Bản Google chưa thể áp dụng. Xung đột được giữ nguyên để tránh mất dữ liệu.");
+            }
+            return result;
+        }
+        catch
+        {
+            if (local is not null && Database.GetReportById(remote.ReportId) is not null)
+                SyncCacheStore.MarkConflict(
+                    remote.ReportId,
+                    local.LastError ?? "Áp dụng bản Google chưa hoàn tất. Xung đột được giữ nguyên để tránh mất dữ liệu.");
+            throw;
+        }
     }
 }
 
