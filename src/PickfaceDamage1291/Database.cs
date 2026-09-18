@@ -362,6 +362,37 @@ WHERE report_id=$id
         return updated;
     }
 
+    public static DamageReport PrepareConflictKeepLocal(string reportId, int remoteVersion, string updatedBy)
+    {
+        var current = GetReportById(reportId)
+                      ?? throw new InvalidOperationException("Không tìm thấy phiếu xung đột trên máy.");
+
+        var nextVersion = Math.Max(Math.Max(1, current.Version) + 1, Math.Max(1, remoteVersion) + 1);
+        var now = DateTime.Now;
+
+        using var cn = Open();
+        using var cmd = cn.CreateCommand();
+        cmd.CommandText = """
+UPDATE damage_reports SET
+ sync_status='PENDING',
+ synced_at=NULL,
+ last_error=NULL,
+ version=$version,
+ updated_at=$updatedAt,
+ updated_by=$updatedBy
+WHERE report_id=$id
+""";
+        cmd.Parameters.AddWithValue("$version", nextVersion);
+        cmd.Parameters.AddWithValue("$updatedAt", now.ToUniversalTime().ToString("O"));
+        cmd.Parameters.AddWithValue("$updatedBy", updatedBy ?? string.Empty);
+        cmd.Parameters.AddWithValue("$id", reportId);
+        if (cmd.ExecuteNonQuery() != 1)
+            throw new InvalidOperationException("Không chuyển được phiếu xung đột sang trạng thái chờ đồng bộ.");
+
+        return GetReportById(reportId)
+               ?? throw new InvalidOperationException("Không đọc lại được phiếu sau khi xử lý xung đột.");
+    }
+
     public static List<DamageReport> GetReports(int limit = 500)
     {
         using var cn = Open();
