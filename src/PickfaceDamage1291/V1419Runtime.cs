@@ -91,7 +91,7 @@ internal static class V1419Runtime
                 selected,
                 select.SelectedDates,
                 select.SelectedShiftLabel,
-                new Progress<string>(s => { if (status is not null) status.Text = s; }), TimeSpan.FromSeconds(20));
+                new Progress<string>(s => { if (status is not null) status.Text = s; }));
             if (result is null) return;
 
             if (status is not null) status.Text = $"Đã xuất {result.ReportCount:N0} phiếu.";
