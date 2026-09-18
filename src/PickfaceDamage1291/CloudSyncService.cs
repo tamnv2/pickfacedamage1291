@@ -49,38 +49,50 @@ internal static class CloudSyncService
             var productsPushed = 0;
             var duplicates = 0;
 
+            progress?.Report("Đang chuẩn bị đồng bộ hai chiều... 5%");
             if (SyncCacheStore.ProductsDirty && AppSession.Current?.Profile.IsAdmin == true)
             {
-                progress?.Report("Đang đẩy danh mục SKU thay đổi từ máy này...");
-                productsPushed += await PushLocalProductCatalogCoreAsync(progress, ct);
+                progress?.Report("Đang đẩy danh mục SKU thay đổi từ máy này... 10%");
+                productsPushed += await PushLocalProductCatalogCoreAsync(null, ct);
             }
 
-            progress?.Report("Đang nhận thay đổi phiếu từ Google...");
-            var pull1 = await PullReportsAsync(progress, ct);
+            progress?.Report("Đang nhận thay đổi phiếu từ Google... 20%");
+            var pull1 = await PullReportsAsync(null, ct);
             reportsPulled += pull1.Applied;
             reportsDeleted += pull1.Deleted;
             conflicts += pull1.Conflicts;
 
-            progress?.Report("Đang đồng bộ danh mục SKU...");
-            var products = await PullProductsAsync(progress, ct);
+            progress?.Report("Đang đồng bộ danh mục SKU... 35%");
+            var products = await PullProductsAsync(null, ct);
             productsPulled += products.Pulled;
             if (products.ServerCount == 0 && Database.GetProductCount() > 0 && AppSession.Current?.Profile.IsAdmin == true)
             {
-                productsPushed += await PushLocalProductCatalogCoreAsync(progress, ct);
-                var confirmProducts = await PullProductsAsync(progress, ct);
+                progress?.Report("Đang khởi tạo danh mục SKU dùng chung... 42%");
+                productsPushed += await PushLocalProductCatalogCoreAsync(null, ct);
+                var confirmProducts = await PullProductsAsync(null, ct);
                 productsPulled += confirmProducts.Pulled;
             }
 
             var pending = Database.GetPendingReports().ToList();
             if (pending.Count > 0)
             {
-                progress?.Report($"Đang đẩy {pending.Count:N0} phiếu local lên Google...");
+                var pendingIndex = 0;
+                progress?.Report($"Đang đẩy {pending.Count:N0} phiếu local lên Google... 45%");
                 foreach (var report in pending)
                 {
                     ct.ThrowIfCancellationRequested();
+                    pendingIndex++;
                     try
                     {
-                        await GoogleService.SyncReportAsync(report);
+                        var currentIndex = pendingIndex;
+                        var itemProgress = new Progress<int>(value =>
+                        {
+                            var completedBefore = currentIndex - 1;
+                            var fractional = completedBefore + Math.Clamp(value, 0, 100) / 100d;
+                            var percent = 45 + (int)Math.Round(35d * fractional / pending.Count);
+                            progress?.Report($"Đang đẩy phiếu {currentIndex:N0}/{pending.Count:N0} lên Google... {Math.Clamp(percent, 45, 80)}%");
+                        });
+                        await GoogleService.SyncReportAsync(report, itemProgress);
                         reportsPushed++;
                     }
                     catch (DuplicateReportException ex)
@@ -104,8 +116,8 @@ internal static class CloudSyncService
                 }
             }
 
-            progress?.Report("Đang xác nhận thay đổi mới nhất từ Google...");
-            var pull2 = await PullReportsAsync(progress, ct);
+            progress?.Report("Đang xác nhận thay đổi mới nhất từ Google... 85%");
+            var pull2 = await PullReportsAsync(null, ct);
             reportsPulled += pull2.Applied;
             reportsDeleted += pull2.Deleted;
             conflicts += pull2.Conflicts;
@@ -114,7 +126,7 @@ internal static class CloudSyncService
             {
                 if (AppSession.Current is { } session)
                 {
-                    progress?.Report("Đang đồng bộ lịch sử thao tác lên Google...");
+                    progress?.Report("Đang đồng bộ lịch sử thao tác lên Google... 95%");
                     await FirebaseClient.FlushAuditOutboxAsync(session, ct);
                 }
             }
@@ -124,7 +136,7 @@ internal static class CloudSyncService
             }
 
             var summary = new CloudSyncSummary(reportsPulled, reportsPushed, reportsDeleted, conflicts, productsPulled, productsPushed, duplicates);
-            progress?.Report($"Hoàn tất: nhận {reportsPulled:N0}, gửi {reportsPushed:N0}, xoá {reportsDeleted:N0}, SKU nhận {productsPulled:N0}, xung đột {conflicts:N0}.");
+            progress?.Report($"Đồng bộ hoàn tất 100%: nhận {reportsPulled:N0}, gửi {reportsPushed:N0}, xoá {reportsDeleted:N0}, SKU nhận {productsPulled:N0}, xung đột {conflicts:N0}.");
             AppLog.Info("CLOUD_SYNC_DONE", "Hoàn tất đồng bộ hai chiều.", new Dictionary<string, object?>
             {
                 ["reports_pulled"] = reportsPulled,
@@ -157,10 +169,11 @@ internal static class CloudSyncService
         try
         {
             SyncCacheStore.Initialize();
-            progress?.Report("Đang nhận thay đổi phiếu từ Google...");
-            var reports = await PullReportsAsync(progress, ct);
-            progress?.Report("Đang nhận danh mục SKU dùng chung...");
-            var products = await PullProductsAsync(progress, ct);
+            progress?.Report("Đang nhận thay đổi phiếu từ Google... 10%");
+            var reports = await PullReportsAsync(null, ct);
+            progress?.Report("Đang nhận danh mục SKU dùng chung... 55%");
+            var products = await PullProductsAsync(null, ct);
+            progress?.Report("Đã nhận dữ liệu dùng chung. 100%");
             return (reports.Applied, reports.Deleted, products.Pulled);
         }
         finally
@@ -187,8 +200,9 @@ internal static class CloudSyncService
                 return (0, 0, true);
             }
 
-            progress?.Report("Đang kiểm tra dữ liệu phiếu mới từ Google...");
-            var reports = await PullReportsAsync(progress, ct);
+            progress?.Report("Đang kiểm tra dữ liệu phiếu mới từ Google... 10%");
+            var reports = await PullReportsAsync(null, ct);
+            progress?.Report("Đã kiểm tra dữ liệu phiếu mới. 100%");
             return (reports.Applied, reports.Deleted, false);
         }
         finally

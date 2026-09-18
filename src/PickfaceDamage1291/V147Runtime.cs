@@ -214,6 +214,9 @@ internal static class V147Runtime
 
         foreach (var flow in FindAll<FlowLayoutPanel>(root))
         {
+            if (string.Equals(flow.Tag as string, "audit-actions-fixed-height", StringComparison.Ordinal))
+                continue;
+
             if (flow.Dock == DockStyle.Top || flow.AutoSize)
             {
                 flow.AutoSize = true;

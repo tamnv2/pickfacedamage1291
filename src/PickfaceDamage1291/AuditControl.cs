@@ -29,17 +29,19 @@ internal sealed class AuditControl : UserControl
         {
             Text = "Lịch sử thao tác hệ thống",
             Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            AutoSize = false,
+            Height = 150,
             Padding = new Padding(12)
         };
         var tools = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            AutoSize = false,
+            Height = 58,
+            MinimumSize = new Size(0, 58),
             WrapContents = true,
-            AutoScroll = false
+            AutoScroll = false,
+            Tag = "audit-actions-fixed-height"
         };
         var refresh = new Button { Text = "Làm mới", AutoSize = true, Height = 34, Padding = new Padding(8, 0, 8, 0) };
         refresh.Click += async (_, _) => await RefreshAsync(resetPaging: true);
@@ -64,8 +66,11 @@ internal sealed class AuditControl : UserControl
         var delete = new Button { Text = "Xóa lịch sử theo ngày", AutoSize = true, Height = 34, Padding = new Padding(8, 0, 8, 0) };
         delete.Click += async (_, _) => await DeleteRangeAsync();
 
-        _status.AutoSize = true;
-        _status.Padding = new Padding(15, 8, 0, 0);
+        _status.AutoSize = false;
+        _status.Dock = DockStyle.Bottom;
+        _status.Height = 34;
+        _status.TextAlign = ContentAlignment.MiddleLeft;
+        _status.Padding = new Padding(0, 5, 0, 0);
         tools.Controls.AddRange([
             refresh,
             _previous,
@@ -74,10 +79,10 @@ internal sealed class AuditControl : UserControl
             _deleteFrom,
             new Label { Text = "đến", AutoSize = true, Padding = new Padding(5, 8, 0, 0) },
             _deleteTo,
-            delete,
-            _status
+            delete
         ]);
         box.Controls.Add(tools);
+        box.Controls.Add(_status);
 
         _grid.Dock = DockStyle.Fill;
         _grid.ReadOnly = true;

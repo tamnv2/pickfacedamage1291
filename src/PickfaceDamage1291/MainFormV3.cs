@@ -28,6 +28,7 @@ internal sealed class MainForm : Form
 
     private readonly DataGridView _reportGrid = new();
     private readonly Label _reportStatus = new();
+    private Button? _resolveConflictButton;
     private readonly DataGridView _productGrid = new();
     private readonly TextBox _productSearch = new();
     private readonly Label _productCount = new();
@@ -36,6 +37,8 @@ internal sealed class MainForm : Form
     private readonly Label _firebaseStatus = new();
     private readonly Label _versionStatus = new();
     private readonly Button _updateButton = new();
+    private readonly Label _resourceStorageStatus = new();
+    private readonly Label _resourceRamStatus = new();
     private ReleaseInfo? _availableRelease;
 
     public MainForm()
@@ -73,7 +76,7 @@ internal sealed class MainForm : Form
 
     private Control BuildHeader()
     {
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 10, 20, 8), ColumnCount = 3, BackColor = Color.White };
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 6, 20, 4), ColumnCount = 3, BackColor = Color.White };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 18));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12));
@@ -91,21 +94,29 @@ internal sealed class MainForm : Form
             Text = "CẬP NHẬT HƯ HỎNG PICKFACE 1291",
             AutoSize = true,
             Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold),
-            Padding = new Padding(0, 7, 0, 0),
+            Padding = new Padding(0, 5, 0, 0),
             Margin = Padding.Empty
         });
         _headerCredit.Text = " | Thiết kế và phát triển bởi: tamnv2 - Chuyên viên Pick Pack 1291";
         _headerCredit.AutoSize = true;
         _headerCredit.Font = new Font("Segoe UI", 9F, FontStyle.Regular);
         _headerCredit.ForeColor = Color.DimGray;
-        _headerCredit.Padding = new Padding(0, 13, 0, 0);
+        _headerCredit.Padding = new Padding(0, 11, 0, 0);
         _headerCredit.Margin = Padding.Empty;
         brand.Controls.Add(_headerCredit);
         panel.Controls.Add(brand, 0, 0);
-        _headerCloud.Dock = DockStyle.Fill;
-        _headerCloud.TextAlign = ContentAlignment.MiddleRight;
-        _headerVersion.Dock = DockStyle.Fill;
-        _headerVersion.TextAlign = ContentAlignment.MiddleRight;
+        _headerCloud.AutoSize = true;
+        _headerCloud.Dock = DockStyle.None;
+        _headerCloud.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _headerCloud.TextAlign = ContentAlignment.TopRight;
+        _headerCloud.Padding = new Padding(0, 7, 0, 0);
+        _headerCloud.Margin = Padding.Empty;
+        _headerVersion.AutoSize = true;
+        _headerVersion.Dock = DockStyle.None;
+        _headerVersion.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _headerVersion.TextAlign = ContentAlignment.TopRight;
+        _headerVersion.Padding = new Padding(0, 7, 0, 0);
+        _headerVersion.Margin = Padding.Empty;
         panel.Controls.Add(_headerCloud, 1, 0);
         panel.Controls.Add(_headerVersion, 2, 0);
         return panel;
@@ -244,6 +255,7 @@ internal sealed class MainForm : Form
         var selectAll = NewButton("Chọn tất cả");
         var clearSelection = NewButton("Bỏ chọn");
         var delete = NewButton("Xoá phiếu đã chọn (ADMIN)");
+        _resolveConflictButton = NewButton("Xử lý xung đột");
         var export = NewButton("Xuất Excel");
         var isAdmin = AppSession.Current?.Profile.IsAdmin == true;
 
@@ -257,6 +269,7 @@ internal sealed class MainForm : Form
         };
         clearSelection.Click += (_, _) => _reportGrid.ClearSelection();
         delete.Click += async (_, _) => await DeleteSelectedReportsAsync();
+        _resolveConflictButton.Click += async (_, _) => await ResolveSelectedConflictAsync();
         export.Click += async (_, _) => await ExportReportsAsync();
 
         edit.Visible = true;
@@ -265,7 +278,7 @@ internal sealed class MainForm : Form
         delete.Visible = isAdmin;
         _reportStatus.AutoSize = true;
         _reportStatus.Padding = new Padding(18, 9, 0, 0);
-        top.Controls.AddRange([refresh, sync, edit, selectAll, clearSelection, delete, export, _reportStatus]);
+        top.Controls.AddRange([refresh, sync, edit, selectAll, clearSelection, delete, _resolveConflictButton, export, _reportStatus]);
         commands.Controls.Add(top);
 
         ConfigureGrid(_reportGrid);
@@ -318,6 +331,7 @@ internal sealed class MainForm : Form
         scroll.Controls.Add(BuildFirebaseSettingsSection());
         scroll.Controls.Add(BuildUpdateSection());
         scroll.Controls.Add(BuildLocalDataSection());
+        scroll.Controls.Add(BuildResourceUsageSection());
         tab.Controls.Add(scroll);
         return tab;
     }
@@ -396,6 +410,31 @@ internal sealed class MainForm : Form
             AutoSize = true,
             MaximumSize = new Size(950, 0),
             Text = "SQLite, ảnh pending và token thực tế chỉ nằm trên laptop người dùng. Dữ liệu/credential thực tế không được commit vào repository public."
+        });
+        box.Controls.Add(panel);
+        return box;
+    }
+
+    private GroupBox BuildResourceUsageSection()
+    {
+        var box = NewSection("Dung lượng và tài nguyên phần mềm");
+        var panel = NewFormTable(220);
+        _resourceStorageStatus.AutoSize = true;
+        _resourceStorageStatus.MaximumSize = new Size(950, 0);
+        _resourceRamStatus.AutoSize = true;
+        _resourceRamStatus.MaximumSize = new Size(950, 0);
+
+        var refresh = NewButton("Làm mới dung lượng / RAM");
+        refresh.Click += (_, _) => RefreshResourceUsage();
+
+        AddFormRow(panel, "Dung lượng phát sinh", _resourceStorageStatus);
+        AddFormRow(panel, "RAM đang sử dụng", _resourceRamStatus);
+        AddFormRow(panel, "Thao tác", refresh);
+        AddFormRow(panel, "Phân loại", new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(950, 0),
+            Text = "CSDL local gồm phiếu hư hỏng, danh mục SKU và trạng thái đồng bộ trong SQLite; ảnh, logs và backup nằm ở các thư mục riêng. Không tách giả dung lượng SKU khỏi SQLite vì chúng dùng chung một file CSDL."
         });
         box.Controls.Add(panel);
         return box;
@@ -718,7 +757,15 @@ internal sealed class MainForm : Form
         foreach (var r in rows)
             _reportGrid.Rows.Add(r.ReportId, r.OccurredDate.ToString("dd/MM/yyyy"), $"{r.Hour:00}:{r.Minute:00}", r.Shift, r.Sku, r.ProductName, r.Location, decimal.Truncate(r.Quantity).ToString("0"), r.BaseUnit, r.Version, DisplayStatus(r.SyncStatus), r.UpdatedBy ?? r.CreatedBy, r.LastError ?? "");
         var pending = rows.Count(x => x.SyncStatus != "SYNCED");
-        _reportStatus.Text = $"Tổng {rows.Count:N0} | Chờ/lỗi đồng bộ: {pending:N0}";
+        var conflicts = rows.Count(x => string.Equals(x.SyncStatus, "CONFLICT", StringComparison.OrdinalIgnoreCase));
+        if (_resolveConflictButton is not null)
+        {
+            _resolveConflictButton.Visible = conflicts > 0;
+            _resolveConflictButton.Enabled = conflicts > 0;
+        }
+        _reportStatus.Text = conflicts > 0
+            ? $"Tổng {rows.Count:N0} | Chờ/lỗi đồng bộ: {pending:N0} | Xung đột: {conflicts:N0} — chọn phiếu và bấm Xử lý xung đột"
+            : $"Tổng {rows.Count:N0} | Chờ/lỗi đồng bộ: {pending:N0}";
     }
 
     private async Task EditSelectedReportAsync()
@@ -905,6 +952,145 @@ internal sealed class MainForm : Form
         "CONFLICT" => "Xung đột",
         _ => "Chờ đồng bộ"
     };
+
+    private async Task ResolveSelectedConflictAsync()
+    {
+        var session = AppSession.Current;
+        if (session is null)
+        {
+            MessageBox.Show(this, "Chưa đăng nhập ứng dụng.", "Không có phiên", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var conflicts = Database.GetReports(int.MaxValue)
+            .Where(x => string.Equals(x.SyncStatus, "CONFLICT", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (conflicts.Count == 0)
+        {
+            MessageBox.Show(this, "Hiện không có phiếu xung đột.", "Xử lý xung đột", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            RefreshReports();
+            return;
+        }
+
+        DamageReport? local = null;
+        foreach (DataGridViewRow row in _reportGrid.SelectedRows)
+        {
+            var id = Convert.ToString(row.Cells["ReportId"].Value) ?? string.Empty;
+            local = conflicts.FirstOrDefault(x => string.Equals(x.ReportId, id, StringComparison.Ordinal));
+            if (local is not null) break;
+        }
+        if (local is null && conflicts.Count == 1) local = conflicts[0];
+        if (local is null)
+        {
+            MessageBox.Show(this, "Có nhiều phiếu xung đột. Hãy chọn đúng dòng có trạng thái Xung đột rồi bấm Xử lý xung đột.", "Chọn phiếu cần xử lý", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!GoogleService.IsConnected())
+        {
+            MessageBox.Show(this, "Cần online để tải bản Google và so sánh. Phiếu xung đột vẫn được giữ nguyên trên máy.", "Chưa thể xử lý", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var ownsReport = !string.IsNullOrWhiteSpace(local.CreatedBy) &&
+                         string.Equals(local.CreatedBy, session.Profile.Username, StringComparison.OrdinalIgnoreCase);
+        var canResolve = session.Profile.IsAdmin || ownsReport;
+
+        try
+        {
+            _reportStatus.Text = "Đang tải bản Google để so sánh xung đột... 10%";
+            var remote = await SyncConflictResolver.FetchRemoteAsync(
+                local.ReportId,
+                new Progress<int>(p => _reportStatus.Text = $"Đang tải bản Google để so sánh xung đột... {p}%"));
+            if (remote is null)
+            {
+                MessageBox.Show(this,
+                    "Không tìm thấy bản hiện tại của phiếu trên Google. Không có dữ liệu nào bị ghi đè. Hãy bấm Đồng bộ lại; nếu vẫn còn xung đột, gửi log để kiểm tra.",
+                    "Chưa lấy được bản Google",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            using var dialog = new SyncConflictResolutionDialog(local, remote, canResolve);
+            if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Choice == SyncConflictChoice.Cancel) return;
+
+            if (!canResolve)
+            {
+                MessageBox.Show(this,
+                    $"Phiếu do tài khoản {local.CreatedBy} tạo. Chỉ tài khoản tạo phiếu hoặc ADMIN được quyết định bản cần giữ.",
+                    "Không có quyền xử lý",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (dialog.Choice == SyncConflictChoice.UseGoogle)
+            {
+                var warning = remote.Deleted
+                    ? "Bản Google đã được xoá. Chấp nhận bản Google sẽ xoá phiếu này khỏi danh sách local trên máy. Tiếp tục?"
+                    : "Dùng bản Google sẽ thay nội dung local hiện tại bằng dữ liệu đang lưu trên Google. Tiếp tục?";
+                if (MessageBox.Show(this, warning, "Xác nhận dùng bản Google", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                    return;
+
+                _reportStatus.Text = "Đang áp dụng bản Google... 70%";
+                SyncConflictResolver.ApplyRemote(remote);
+                _reportStatus.Text = "Đã xử lý xung đột bằng bản Google. 100%";
+            }
+            else if (dialog.Choice == SyncConflictChoice.KeepLocal)
+            {
+                if (MessageBox.Show(this,
+                        "Giữ bản trên máy sẽ tăng phiên bản local và ghi đè bản hiện tại trên Google. Tiếp tục?",
+                        "Xác nhận ghi bản local lên Google",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning) != DialogResult.Yes)
+                    return;
+
+                var prepared = Database.PrepareConflictKeepLocal(local.ReportId, remote.Version, session.Profile.Username);
+                _reportStatus.Text = "Đang ghi bản trên máy lên Google... 5%";
+                await GoogleService.SyncReportAsync(
+                    prepared,
+                    new Progress<int>(p => _reportStatus.Text = $"Đang ghi bản trên máy lên Google... {p}%"));
+                _reportStatus.Text = "Đã xử lý xung đột bằng bản trên máy. 100%";
+            }
+
+            try
+            {
+                await FirebaseClient.AppendAuditAsync(session, "SYNC_CONFLICT_RESOLVED", new
+                {
+                    report_id = local.ReportId,
+                    choice = dialog.Choice.ToString(),
+                    local_version = local.Version,
+                    remote_version = remote.Version
+                });
+            }
+            catch (Exception auditEx)
+            {
+                AppLog.Exception("SYNC_CONFLICT_AUDIT_FAILED", auditEx, new Dictionary<string, object?>
+                {
+                    ["report_id"] = local.ReportId
+                });
+            }
+
+            MessageBox.Show(this, "Xung đột đã được xử lý. Dữ liệu được giữ theo lựa chọn vừa xác nhận.", "Xử lý xung đột hoàn tất", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Exception("SYNC_CONFLICT_RESOLUTION_FAILED", ex, new Dictionary<string, object?>
+            {
+                ["report_id"] = local.ReportId
+            });
+            MessageBox.Show(this,
+                "Chưa xử lý được xung đột. Dữ liệu hiện tại vẫn được giữ để tránh mất thông tin.\n\n" + ex.Message,
+                "Xử lý xung đột chưa hoàn tất",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            RefreshReports();
+        }
+    }
 
     private async Task ExportReportsAsync()
     {
@@ -1099,6 +1285,29 @@ internal sealed class MainForm : Form
         _updateButton.Text = _availableRelease is not null && VersionUpdateService.IsNewer(_availableRelease) ? $"Cập nhật lên {_availableRelease.Tag}" : "Kiểm tra cập nhật";
         _headerCloud.Text = connected ? "Google: đã kết nối" : reconnect ? "Google: cần kết nối lại" : "Google: local/offline";
         _headerVersion.Text = VersionUpdateService.CurrentVersionText;
+        RefreshResourceUsage();
+    }
+
+    private void RefreshResourceUsage()
+    {
+        try
+        {
+            var usage = ResourceUsageService.GetSnapshot();
+            _resourceStorageStatus.Text =
+                $"Tổng phát sinh: {ResourceUsageService.FormatBytes(usage.TotalBytes)}\n" +
+                $"• CSDL local (phiếu + danh mục SKU + trạng thái đồng bộ): {ResourceUsageService.FormatBytes(usage.DatabaseBytes)}\n" +
+                $"• Cấu hình/cache dữ liệu khác: {ResourceUsageService.FormatBytes(usage.DataAuxBytes)}\n" +
+                $"• Ảnh: {ResourceUsageService.FormatBytes(usage.ImageBytes)}\n" +
+                $"• Logs: {ResourceUsageService.FormatBytes(usage.LogBytes)}\n" +
+                $"• Backup: {ResourceUsageService.FormatBytes(usage.BackupBytes)}\n" +
+                $"• Khác: {ResourceUsageService.FormatBytes(usage.OtherBytes)}";
+            _resourceRamStatus.Text = $"{ResourceUsageService.FormatBytes(usage.RamWorkingSetBytes)} (Working Set của tiến trình hiện tại)";
+        }
+        catch (Exception ex)
+        {
+            _resourceStorageStatus.Text = "Chưa đọc được dung lượng phát sinh: " + ex.Message;
+            _resourceRamStatus.Text = "-";
+        }
     }
 
     private void OpenDriveFolder() => Process.Start(new ProcessStartInfo($"https://drive.google.com/drive/folders/{CloudConfig.DriveRootFolderId}") { UseShellExecute = true });

@@ -172,8 +172,8 @@ internal static class VersionUpdateService
             {
                 try
                 {
-                    progress?.Report("Đang tải bản cập nhật từ GitHub...");
-                    await DownloadDirectAsync(release.AssetUrl, temp, cancellationToken);
+                    progress?.Report("Đang tải bản cập nhật từ GitHub... 5%");
+                    await DownloadDirectAsync(release.AssetUrl, temp, progress, cancellationToken);
                     VerifyDigestIfAvailable(temp, release.Digest);
                     File.Move(temp, destination, true);
                     return;
@@ -194,7 +194,7 @@ internal static class VersionUpdateService
                 }
             }
 
-            progress?.Report("GitHub không truy cập được. Đang tải qua Google Drive dự phòng...");
+            progress?.Report("GitHub không truy cập được. Đang tải qua Google Drive dự phòng... 5%");
             try
             {
                 await DownloadFromGoogleMirrorAsync(release, temp, progress, cancellationToken);
@@ -223,13 +223,41 @@ internal static class VersionUpdateService
         }
     }
 
-    private static async Task DownloadDirectAsync(string assetUrl, string destination, CancellationToken cancellationToken)
+    private static async Task DownloadDirectAsync(
+        string assetUrl,
+        string destination,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
     {
         using var response = await Http.GetAsync(assetUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
+        var total = response.Content.Headers.ContentLength;
         await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var output = File.Create(destination);
-        await input.CopyToAsync(output, cancellationToken);
+
+        var buffer = new byte[128 * 1024];
+        long written = 0;
+        var lastPercent = -1;
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read <= 0) break;
+            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            written += read;
+
+            if (total is > 0)
+            {
+                var downloadPercent = Math.Clamp((int)Math.Round(written * 100d / total.Value), 0, 100);
+                if (downloadPercent != lastPercent)
+                {
+                    var overallPercent = 5 + (int)Math.Round(downloadPercent * 0.75d);
+                    progress?.Report($"Đang tải bản cập nhật từ GitHub... {overallPercent}%");
+                    lastPercent = downloadPercent;
+                }
+            }
+        }
+        await output.FlushAsync(cancellationToken);
+        progress?.Report("Đã tải xong gói cập nhật. 80%");
     }
 
     private static async Task DownloadFromGoogleMirrorAsync(
@@ -285,8 +313,9 @@ internal static class VersionUpdateService
             mirrorDigest ??= root.TryGetProperty("digest", out var digestNode) ? digestNode.GetString() : null;
             await output.WriteAsync(bytes, cancellationToken);
             written += bytes.LongLength;
-            var percent = totalSize > 0 ? Math.Clamp((int)Math.Round(written * 100d / totalSize), 0, 100) : 0;
-            progress?.Report($"Đang tải qua Google Drive dự phòng... {percent}% ({index + 1}/{chunkCount})");
+            var downloadPercent = totalSize > 0 ? Math.Clamp((int)Math.Round(written * 100d / totalSize), 0, 100) : 0;
+            var overallPercent = 5 + (int)Math.Round(downloadPercent * 0.75d);
+            progress?.Report($"Đang tải qua Google Drive dự phòng... {overallPercent}% ({index + 1}/{chunkCount})");
 
             if (index + 1 >= chunkCount) break;
         }
@@ -337,15 +366,17 @@ internal static class VersionUpdateService
         var zipPath = Path.Combine(work, string.IsNullOrWhiteSpace(release.AssetName) ? "update.zip" : release.AssetName);
         await DownloadPackageAsync(release, zipPath, progress, cancellationToken);
 
-        progress?.Report("Đang kiểm tra gói cập nhật...");
+        progress?.Report("Đang kiểm tra gói cập nhật... 86%");
         var extract = Path.Combine(work, "extract");
         Directory.CreateDirectory(extract);
+        progress?.Report("Đang giải nén gói cập nhật... 90%");
         ExtractZipSafely(zipPath, extract);
         var newExe = Directory.EnumerateFiles(extract, "PickfaceDamage1291.exe", SearchOption.AllDirectories).FirstOrDefault()
                      ?? throw new InvalidDataException("Gói cập nhật không có PickfaceDamage1291.exe.");
 
         var targetExe = CurrentExecutablePath;
         var stagedExe = targetExe + ".update";
+        progress?.Report("Đang chuẩn bị file cập nhật... 95%");
         File.Copy(newExe, stagedExe, true);
 
         var script = Path.Combine(work, "apply-update.cmd");
@@ -373,6 +404,7 @@ internal static class VersionUpdateService
             .AppendLine("del \"%~f0\"")
             .ToString();
         File.WriteAllText(script, scriptText, Encoding.ASCII);
+        progress?.Report("Sẵn sàng cài đặt bản cập nhật. 100%");
         return script;
     }
 

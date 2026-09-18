@@ -615,9 +615,20 @@ internal static class V148Runtime
                 }
 
                 var pending = visible.Count(x => !string.Equals(x.SyncStatus, "SYNCED", StringComparison.OrdinalIgnoreCase));
-                _status.Text = _showAll
+                var allConflicts = rows.Count(x => string.Equals(x.SyncStatus, "CONFLICT", StringComparison.OrdinalIgnoreCase));
+                var resolveConflict = GetPrivateField<Button>(_main, "_resolveConflictButton");
+                if (resolveConflict is not null)
+                {
+                    resolveConflict.Visible = allConflicts > 0;
+                    resolveConflict.Enabled = allConflicts > 0;
+                }
+
+                var baseStatus = _showAll
                     ? $"Toàn bộ {visible.Count:N0} | Chờ/lỗi đồng bộ: {pending:N0}"
                     : $"Ngày nhập {_date.Value:dd/MM/yyyy}: {visible.Count:N0} | Chờ/lỗi đồng bộ: {pending:N0}";
+                _status.Text = allConflicts > 0
+                    ? baseStatus + $" | Xung đột: {allConflicts:N0} — chọn phiếu và bấm Xử lý xung đột"
+                    : baseStatus;
                 _mode.Text = _showAll
                     ? "Đang hiển thị toàn bộ — dữ liệu lớn có thể làm chậm ứng dụng."
                     : "Danh sách lọc theo thời gian nhập thực tế, không theo thời gian phát hiện.";
