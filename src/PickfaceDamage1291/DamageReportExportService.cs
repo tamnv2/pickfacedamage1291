@@ -51,7 +51,7 @@ internal static class DamageReportExportService
         };
         if (save.ShowDialog(owner) != DialogResult.OK) return null;
 
-        progress?.Report("Đang chuẩn bị dữ liệu xuất Excel...");
+        progress?.Report("Đang chuẩn bị dữ liệu xuất Excel... 5%");
         using var wb = new XLWorkbook();
         var ws = wb.Worksheets.Add("Hàng hỏng Pickface 1291");
         ConfigureSheet(ws);
@@ -84,7 +84,10 @@ internal static class DamageReportExportService
             ct.ThrowIfCancellationRequested();
             var report = reports[i];
             var row = i + 3;
-            progress?.Report($"Đang xuất {i + 1:N0}/{reports.Count:N0}: SKU {report.Sku}");
+            var overallPercent = reports.Count == 0
+                ? 85
+                : Math.Clamp(10 + (int)Math.Round(75d * (i + 1) / reports.Count), 10, 85);
+            progress?.Report($"Đang xuất {i + 1:N0}/{reports.Count:N0}: SKU {report.Sku}... {overallPercent}%");
 
             // 150 pt is about 200 px at 96 DPI. The image canvas below is intentionally
             // smaller so every picture stays inside the visual bounds of this report row.
@@ -125,7 +128,7 @@ internal static class DamageReportExportService
                 {
                     try
                     {
-                        progress?.Report($"Đang tải ảnh {imageIndex + 1:N0}/{reportImages.Count:N0} cho SKU {report.Sku}...");
+                        progress?.Report($"Đang tải ảnh {imageIndex + 1:N0}/{reportImages.Count:N0} cho SKU {report.Sku}... {overallPercent}%");
                         current = await RemoteImageCache.EnsureLocalAsync(current, ct);
                     }
                     catch (Exception ex)
@@ -159,7 +162,7 @@ internal static class DamageReportExportService
                 }
             }
 
-            progress?.Report($"Đang chèn ảnh vào Excel cho SKU {report.Sku}...");
+            progress?.Report($"Đang chèn ảnh vào Excel cho SKU {report.Sku}... {overallPercent}%");
             var added = AddPictures(ws, row, resolved, report.ReportId, report.Sku);
             totalImages += added;
             missingImages += Math.Max(0, resolved.Count - added);
@@ -186,9 +189,9 @@ internal static class DamageReportExportService
         ws.PageSetup.CenterHorizontally = true;
         ws.PageSetup.PrintAreas.Add(1, 1, reports.Count + 2, 8);
 
-        progress?.Report("Đang ghi file Excel...");
+        progress?.Report("Đang ghi file Excel... 95%");
         wb.SaveAs(save.FileName);
-        progress?.Report("Đã xuất Excel.");
+        progress?.Report("Đã xuất Excel. 100%");
         return new DamageExportResult(save.FileName, reports.Count, totalImages, missingImages);
     }
 
