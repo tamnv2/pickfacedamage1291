@@ -74,9 +74,9 @@ internal sealed class MainForm : Form
     private Control BuildHeader()
     {
         var panel = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 10, 20, 8), ColumnCount = 3, BackColor = Color.White };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 27));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 18));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12));
         var brand = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
