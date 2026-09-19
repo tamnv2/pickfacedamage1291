@@ -46,6 +46,10 @@ jobs:
           grep -Fq "hard_delete_reports" apps-script/GoogleGateway/HardDeleteV1410.gs
           grep -Fq "firebase_refresh_session" apps-script/GoogleGateway/HardDeleteV1410.gs
           grep -Fq "firebase_admin_create_user" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "release_metadata" apps-script/GoogleGateway/HardDeleteV1410.gs
+          test -f apps-script/GoogleGateway/ReleaseMetadataV1432.gs
+          test ! -f apps-script/GoogleGateway/ReleaseMirrorV1411.gs
+          test ! -f apps-script/GoogleGateway/ReleaseMirrorDeployMarkerV1411.gs
           test -f apps-script/GoogleGateway/OfficeNetworkV1412.gs
 
       - name: Configure clasp safely
@@ -151,7 +155,7 @@ jobs:
           if (data.ok !== true) process.exit(2);
           if (data.version !== '1.4.12') process.exit(3);
           const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
-          for (const cap of ['rtdb_proxy','hard_delete_reports','firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412']) {
+          for (const cap of ['rtdb_proxy','hard_delete_reports','firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412','release_metadata']) {
             if (!caps.includes(cap)) process.exit(4);
           }
           NODE
