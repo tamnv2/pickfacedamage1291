@@ -14,7 +14,8 @@ internal sealed record ReleaseInfo(
     string Notes,
     string AssetName,
     string AssetUrl,
-    string? Digest);
+    string? Digest,
+    bool DirectGitHubAvailable);
 
 internal static class VersionUpdateService
 {
@@ -46,7 +47,7 @@ internal static class VersionUpdateService
         catch (Exception ex)
         {
             directError = ex;
-            AppLog.Warning("UPDATE_GITHUB_METADATA_FALLBACK", "Không đọc được GitHub Release trực tiếp; chuyển sang Google gateway.", new Dictionary<string, object?>
+            AppLog.Warning("UPDATE_GITHUB_METADATA_GATEWAY", "Không đọc được GitHub Release trực tiếp; dùng Google gateway chỉ để đọc metadata phiên bản.", new Dictionary<string, object?>
             {
                 ["error"] = ex.GetType().Name
             });
@@ -54,7 +55,7 @@ internal static class VersionUpdateService
 
         try
         {
-            return await GetLatestFromGoogleMirrorAsync(cancellationToken);
+            return await GetLatestFromGoogleGatewayAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -63,7 +64,7 @@ internal static class VersionUpdateService
         catch (Exception fallbackError)
         {
             throw new InvalidOperationException(
-                "Không kiểm tra được bản cập nhật qua GitHub trực tiếp và Google gateway dự phòng.",
+                "Không kiểm tra được bản cập nhật. GitHub không truy cập được và Google Gateway cũng không trả metadata phiên bản.",
                 directError is null ? fallbackError : new AggregateException(directError, fallbackError));
         }
     }
@@ -103,12 +104,12 @@ internal static class VersionUpdateService
             }
         }
 
-        return new ReleaseInfo(version, tag, htmlUrl, notes, assetName, assetUrl, digest);
+        return new ReleaseInfo(version, tag, htmlUrl, notes, assetName, assetUrl, digest, true);
     }
 
-    private static async Task<ReleaseInfo?> GetLatestFromGoogleMirrorAsync(CancellationToken cancellationToken)
+    private static async Task<ReleaseInfo?> GetLatestFromGoogleGatewayAsync(CancellationToken cancellationToken)
     {
-        using var doc = await PostGatewayAsync("release_mirror_manifest", new { }, cancellationToken);
+        using var doc = await PostGatewayAsync("release_metadata", new { }, cancellationToken);
         var root = doc.RootElement;
         EnsureGatewayOk(root);
 
@@ -120,17 +121,15 @@ internal static class VersionUpdateService
         var htmlUrl = root.TryGetProperty("html_url", out var htmlNode) ? htmlNode.GetString() ?? CloudConfig.GitHubReleasesPage : CloudConfig.GitHubReleasesPage;
         var notes = root.TryGetProperty("notes", out var notesNode) ? notesNode.GetString() ?? string.Empty : string.Empty;
 
-        if (string.IsNullOrWhiteSpace(assetName))
-            throw new InvalidDataException("Google gateway không trả tên gói Windows x64.");
-        if (string.IsNullOrWhiteSpace(digest) || !digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("Google gateway không trả SHA-256 hợp lệ cho gói cập nhật.");
+        if (string.IsNullOrWhiteSpace(assetName) || string.IsNullOrWhiteSpace(assetUrl))
+            throw new InvalidDataException("Google gateway không trả đủ metadata gói Windows x64.");
 
-        AppLog.Info("UPDATE_METADATA_GOOGLE_FALLBACK", "Đã đọc metadata cập nhật qua Google gateway.", new Dictionary<string, object?>
+        AppLog.Info("UPDATE_METADATA_GOOGLE_GATEWAY", "Đã đọc metadata phiên bản qua Google gateway; không tải file cập nhật qua Google Drive.", new Dictionary<string, object?>
         {
             ["tag"] = tag,
             ["asset"] = assetName
         });
-        return new ReleaseInfo(version, tag, htmlUrl, notes, assetName, assetUrl, digest);
+        return new ReleaseInfo(version, tag, htmlUrl, notes, assetName, assetUrl, digest, false);
     }
 
     public static bool IsNewer(ReleaseInfo release) => release.Version > Normalize(CurrentVersion);
@@ -162,60 +161,36 @@ internal static class VersionUpdateService
     {
         if (string.IsNullOrWhiteSpace(destination))
             throw new ArgumentException("Chưa chọn nơi lưu bản cập nhật.", nameof(destination));
+        if (!release.DirectGitHubAvailable)
+            throw new InvalidOperationException(
+                "Đã phát hiện bản cập nhật nhưng mạng hiện tại không truy cập được GitHub. " +
+                "Ứng dụng không tải bản cập nhật qua Google Drive. Hãy chuyển sang mạng có Internet và truy cập được GitHub, sau đó thử cập nhật lại.");
+        if (string.IsNullOrWhiteSpace(release.AssetUrl))
+            throw new InvalidOperationException("Bản phát hành chưa có đường dẫn tải GitHub hợp lệ.");
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(destination))!);
         var temp = destination + ".part";
-        Exception? directError = null;
         try
         {
-            if (!string.IsNullOrWhiteSpace(release.AssetUrl))
+            progress?.Report("Đang tải bản cập nhật từ GitHub... 5%");
+            await DownloadDirectAsync(release.AssetUrl, temp, progress, cancellationToken);
+            VerifyDigestIfAvailable(temp, release.Digest);
+            File.Move(temp, destination, true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning("UPDATE_GITHUB_DOWNLOAD_BLOCKED", "Không tải được release trực tiếp từ GitHub; không có fallback Google Drive.", new Dictionary<string, object?>
             {
-                try
-                {
-                    progress?.Report("Đang tải bản cập nhật từ GitHub... 5%");
-                    await DownloadDirectAsync(release.AssetUrl, temp, progress, cancellationToken);
-                    VerifyDigestIfAvailable(temp, release.Digest);
-                    File.Move(temp, destination, true);
-                    return;
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    directError = ex;
-                    try { if (File.Exists(temp)) File.Delete(temp); } catch { }
-                    AppLog.Warning("UPDATE_GITHUB_DOWNLOAD_FALLBACK", "Không tải được release trực tiếp từ GitHub; chuyển sang Google Drive mirror.", new Dictionary<string, object?>
-                    {
-                        ["tag"] = release.Tag,
-                        ["error"] = ex.GetType().Name
-                    });
-                }
-            }
-
-            progress?.Report("GitHub không truy cập được. Đang tải qua Google Drive dự phòng... 5%");
-            try
-            {
-                await DownloadFromGoogleMirrorAsync(release, temp, progress, cancellationToken);
-                VerifyDigestIfAvailable(temp, release.Digest);
-                File.Move(temp, destination, true);
-                AppLog.Info("UPDATE_GOOGLE_MIRROR_DOWNLOAD_OK", "Đã tải gói cập nhật qua Google Drive mirror.", new Dictionary<string, object?>
-                {
-                    ["tag"] = release.Tag,
-                    ["asset"] = release.AssetName
-                });
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception fallbackError)
-            {
-                throw new InvalidOperationException(
-                    "Không tải được bản cập nhật qua GitHub trực tiếp và Google Drive dự phòng.",
-                    directError is null ? fallbackError : new AggregateException(directError, fallbackError));
-            }
+                ["tag"] = release.Tag,
+                ["error"] = ex.GetType().Name
+            });
+            throw new InvalidOperationException(
+                "Không tải được bản cập nhật từ GitHub. Nếu đang dùng mạng Office hoặc mạng đang chặn GitHub, hãy chuyển sang mạng có Internet và truy cập được GitHub rồi thử lại.",
+                ex);
         }
         finally
         {
@@ -260,78 +235,10 @@ internal static class VersionUpdateService
         progress?.Report("Đã tải xong gói cập nhật. 80%");
     }
 
-    private static async Task DownloadFromGoogleMirrorAsync(
-        ReleaseInfo release,
-        string destination,
-        IProgress<string>? progress,
-        CancellationToken cancellationToken)
-    {
-        await using var output = File.Create(destination);
-        long totalSize = -1;
-        long written = 0;
-        int chunkCount = -1;
-        string? mirrorDigest = null;
-
-        for (var index = 0; index < 512; index++)
-        {
-            using var doc = await PostGatewayAsync(
-                "release_mirror_chunk",
-                new { tag = release.Tag, asset_name = release.AssetName, chunk_index = index },
-                cancellationToken);
-            var root = doc.RootElement;
-            EnsureGatewayOk(root);
-
-            var returnedTag = root.TryGetProperty("tag", out var tagNode) ? tagNode.GetString() ?? string.Empty : string.Empty;
-            var returnedAsset = root.TryGetProperty("asset_name", out var assetNode) ? assetNode.GetString() ?? string.Empty : string.Empty;
-            if (!string.Equals(returnedTag, release.Tag, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(returnedAsset, release.AssetName, StringComparison.Ordinal))
-                throw new InvalidDataException("Google Drive mirror trả sai release hoặc sai tên asset.");
-
-            var currentTotal = root.GetProperty("total_size").GetInt64();
-            var currentCount = root.GetProperty("chunk_count").GetInt32();
-            if (currentTotal <= 0 || currentCount <= 0 || currentCount > 512)
-                throw new InvalidDataException("Thông tin kích thước/chunk của Google Drive mirror không hợp lệ.");
-            if (totalSize < 0) totalSize = currentTotal;
-            if (chunkCount < 0) chunkCount = currentCount;
-            if (totalSize != currentTotal || chunkCount != currentCount)
-                throw new InvalidDataException("Metadata mirror thay đổi trong lúc tải. Đã dừng cập nhật.");
-
-            var encoded = root.TryGetProperty("data_base64", out var dataNode) ? dataNode.GetString() ?? string.Empty : string.Empty;
-            if (string.IsNullOrWhiteSpace(encoded)) throw new InvalidDataException("Google Drive mirror trả chunk rỗng.");
-            byte[] bytes;
-            try { bytes = Convert.FromBase64String(encoded); }
-            catch (FormatException ex) { throw new InvalidDataException("Chunk mirror không phải Base64 hợp lệ.", ex); }
-
-            var expectedChunkHash = root.TryGetProperty("chunk_sha256", out var hashNode) ? hashNode.GetString() ?? string.Empty : string.Empty;
-            if (!string.IsNullOrWhiteSpace(expectedChunkHash))
-            {
-                var actualChunkHash = Convert.ToHexString(SHA256.HashData(bytes));
-                if (!actualChunkHash.Equals(expectedChunkHash, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"SHA-256 chunk {index + 1}/{chunkCount} không khớp. Đã dừng cập nhật.");
-            }
-
-            mirrorDigest ??= root.TryGetProperty("digest", out var digestNode) ? digestNode.GetString() : null;
-            await output.WriteAsync(bytes, cancellationToken);
-            written += bytes.LongLength;
-            var downloadPercent = totalSize > 0 ? Math.Clamp((int)Math.Round(written * 100d / totalSize), 0, 100) : 0;
-            var overallPercent = 5 + (int)Math.Round(downloadPercent * 0.75d);
-            progress?.Report($"Đang tải qua Google Drive dự phòng... {overallPercent}% ({index + 1}/{chunkCount})");
-
-            if (index + 1 >= chunkCount) break;
-        }
-
-        await output.FlushAsync(cancellationToken);
-        if (totalSize <= 0 || chunkCount <= 0 || written != totalSize)
-            throw new InvalidDataException($"Gói mirror tải chưa đủ dữ liệu ({written}/{totalSize}).");
-        if (!string.IsNullOrWhiteSpace(release.Digest) && !string.IsNullOrWhiteSpace(mirrorDigest) &&
-            !release.Digest.Equals(mirrorDigest, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("SHA-256 metadata giữa release và Google Drive mirror không khớp.");
-    }
-
     private static async Task<JsonDocument> PostGatewayAsync(string action, object payload, CancellationToken cancellationToken)
     {
         if (!RuntimeConfigService.IsGoogleGatewayConfigured)
-            throw new InvalidOperationException("Build chưa có Google gateway dự phòng cho cập nhật.");
+            throw new InvalidOperationException("Build chưa có Google Gateway để đọc metadata phiên bản khi GitHub bị chặn.");
 
         var body = JsonSerializer.Serialize(new { action, payload });
         using var request = new HttpRequestMessage(HttpMethod.Post, RuntimeConfigService.GoogleGatewayUrl)
@@ -349,7 +256,7 @@ internal static class VersionUpdateService
     {
         if (root.TryGetProperty("ok", out var okNode) && okNode.ValueKind == JsonValueKind.True) return;
         var error = root.TryGetProperty("error", out var errorNode) ? errorNode.GetString() ?? string.Empty : string.Empty;
-        throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "Google gateway không xử lý được yêu cầu cập nhật." : error);
+        throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "Google Gateway không xử lý được yêu cầu đọc metadata phiên bản." : error);
     }
 
     public static async Task<string> PrepareAutoUpdateAsync(
@@ -440,7 +347,7 @@ internal static class VersionUpdateService
 
     private static HttpClient CreateGatewayHttpClient()
     {
-        var client = NetworkHttpClientFactory.Create(TimeSpan.FromMinutes(6), "PickfaceDamage1291-Updater-GoogleFallback");
+        var client = NetworkHttpClientFactory.Create(TimeSpan.FromMinutes(6), "PickfaceDamage1291-Updater-Metadata");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
         return client;
     }
