@@ -43,6 +43,8 @@ Require-Text "apps-script/GoogleGateway/HardDeleteV1410.gs" "release_metadata" '
 Require-Text "apps-script/GoogleGateway/ReleaseMetadataV1432.gs" "drive_mirror: false" 'Metadata proxy no longer explicitly disables Drive mirroring.'
 Require-MissingPath "apps-script/GoogleGateway/ReleaseMirrorV1411.gs" 'Regression: obsolete Google Drive release mirror implementation exists again.'
 Require-MissingPath ".github/workflows/warm-release-mirror.yml" 'Regression: automatic Google Drive release mirror workflow exists again.'
+Require-Text ".github/workflows/deploy-apps-script.yml" 'Verify updater metadata stays GitHub-only' 'Deploy workflow no longer verifies the metadata-only updater endpoint.'
+Forbid-Text ".github/workflows/release-windows.yml" 'warm_release_mirror:' 'Regression: release workflow creates Google Drive mirrors again.'
 
 Require-Text "$src/CloudSyncService.cs" 'PullReportsOnlyAsync' 'Missing report-only smart sync path.'
 Require-Text "$src/V142Runtime.cs" 'PullReportsOnlyAsync(progress, TimeSpan.FromSeconds(30), ct)' 'Network recovery regressed to a heavier shared-data pull.'
