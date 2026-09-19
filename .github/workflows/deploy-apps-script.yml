@@ -172,6 +172,21 @@ jobs:
           echo "::error::Gateway live chưa trả version 1.4.12 + Office/PDA adaptive capabilities sau thời gian chờ propagation."
           exit 1
 
+      - name: Verify updater metadata stays GitHub-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE="$(curl -sSL             -H 'Content-Type: application/json'             --data '{"action":"release_metadata","payload":{}}'             "$GATEWAY_URL")"
+
+          RESPONSE="$RESPONSE" node <<'NODE'
+          const data = JSON.parse(process.env.RESPONSE || '{}');
+          if (data.ok !== true) process.exit(2);
+          if (data.download_transport !== 'github_only') process.exit(3);
+          if (data.drive_mirror !== false) process.exit(4);
+          if (!/^v\d+\.\d+\.\d+/.test(String(data.tag || ''))) process.exit(5);
+          if (!/^https:\/\/github\.com\/tamnv2\/pickfacedamage1291\/releases\/download\//i.test(String(data.asset_url || ''))) process.exit(6);
+          NODE
+
       - name: Cleanup credentials
         if: always()
         shell: bash
