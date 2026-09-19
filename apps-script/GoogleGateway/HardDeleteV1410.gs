@@ -2,7 +2,7 @@ const GATEWAY_VERSION_V1410 = '1.4.12';
 const GATEWAY_CAPABILITIES_V1410 = Object.freeze([
   'pull_changes','push_products','pull_products','append_audit','list_audit','delete_audit_range',
   'upload_log','sync_report','hard_delete_reports','get_image','rtdb_proxy',
-  'firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412'
+  'firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412','release_metadata'
 ]);
 
 // v1.4.10 wrapper. Legacy doPost in Code.gs is renamed to doPostLegacy_ during verified promotion.
@@ -55,16 +55,8 @@ function doPost(e) {
       return json_({ ok:true, ...deleteAuditRangeV1410_(auth, payload) });
     }
 
-    if (action === 'release_mirror_manifest') {
-      return json_({ ok:true, ...releaseMirrorManifestV1411_(payload) });
-    }
-
-    if (action === 'release_mirror_chunk') {
-      return json_({ ok:true, ...releaseMirrorChunkV1411_(payload) });
-    }
-
-    if (action === 'warm_release_mirror') {
-      return json_({ ok:true, ...warmLatestReleaseMirrorV1411_() });
+    if (action === 'release_metadata') {
+      return json_({ ok:true, ...releaseMetadataV1432_() });
     }
 
     return doPostLegacy_(e);

@@ -46,6 +46,10 @@ jobs:
           grep -Fq "hard_delete_reports" apps-script/GoogleGateway/HardDeleteV1410.gs
           grep -Fq "firebase_refresh_session" apps-script/GoogleGateway/HardDeleteV1410.gs
           grep -Fq "firebase_admin_create_user" apps-script/GoogleGateway/HardDeleteV1410.gs
+          grep -Fq "release_metadata" apps-script/GoogleGateway/HardDeleteV1410.gs
+          test -f apps-script/GoogleGateway/ReleaseMetadataV1432.gs
+          test ! -f apps-script/GoogleGateway/ReleaseMirrorV1411.gs
+          test ! -f apps-script/GoogleGateway/ReleaseMirrorDeployMarkerV1411.gs
           test -f apps-script/GoogleGateway/OfficeNetworkV1412.gs
 
       - name: Configure clasp safely
@@ -151,7 +155,7 @@ jobs:
           if (data.ok !== true) process.exit(2);
           if (data.version !== '1.4.12') process.exit(3);
           const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
-          for (const cap of ['rtdb_proxy','hard_delete_reports','firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412']) {
+          for (const cap of ['rtdb_proxy','hard_delete_reports','firebase_refresh_session','firebase_admin_create_user','adaptive_office_route_v1412','release_metadata']) {
             if (!caps.includes(cap)) process.exit(4);
           }
           NODE
@@ -167,6 +171,21 @@ jobs:
 
           echo "::error::Gateway live chưa trả version 1.4.12 + Office/PDA adaptive capabilities sau thời gian chờ propagation."
           exit 1
+
+      - name: Verify updater metadata stays GitHub-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE="$(curl -sSL             -H 'Content-Type: application/json'             --data '{"action":"release_metadata","payload":{}}'             "$GATEWAY_URL")"
+
+          RESPONSE="$RESPONSE" node <<'NODE'
+          const data = JSON.parse(process.env.RESPONSE || '{}');
+          if (data.ok !== true) process.exit(2);
+          if (data.download_transport !== 'github_only') process.exit(3);
+          if (data.drive_mirror !== false) process.exit(4);
+          if (!/^v\d+\.\d+\.\d+/.test(String(data.tag || ''))) process.exit(5);
+          if (!/^https:\/\/github\.com\/tamnv2\/pickfacedamage1291\/releases\/download\//i.test(String(data.asset_url || ''))) process.exit(6);
+          NODE
 
       - name: Cleanup credentials
         if: always()

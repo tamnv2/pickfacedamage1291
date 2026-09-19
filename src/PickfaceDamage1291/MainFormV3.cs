@@ -1281,8 +1281,16 @@ internal sealed class MainForm : Form
         _firebaseStatus.Text = firebaseReady
             ? $"Đã cấu hình Firebase. Phiên hiện tại: {AppSession.Current?.Profile.Username ?? "-"} ({AppSession.Current?.Profile.Role.ToUpperInvariant() ?? "-"})."
             : "Chưa có Firebase API key / Realtime Database URL của project pickface-damage-1291.";
-        _versionStatus.Text = _availableRelease is null ? "Chưa kiểm tra bản mới." : VersionUpdateService.IsNewer(_availableRelease) ? $"Có bản mới {_availableRelease.Tag}." : $"Đang dùng bản mới nhất ({VersionUpdateService.CurrentVersionText}).";
-        _updateButton.Text = _availableRelease is not null && VersionUpdateService.IsNewer(_availableRelease) ? $"Cập nhật lên {_availableRelease.Tag}" : "Kiểm tra cập nhật";
+        _versionStatus.Text = _availableRelease is null
+            ? "Chưa kiểm tra bản mới."
+            : VersionUpdateService.IsNewer(_availableRelease)
+                ? _availableRelease.DirectGitHubAvailable
+                    ? $"Có bản mới {_availableRelease.Tag}. GitHub sẵn sàng để tải."
+                    : $"Có bản mới {_availableRelease.Tag}. Mạng hiện tại chưa truy cập GitHub; cần chuyển mạng để tải."
+                : $"Đang dùng bản mới nhất ({VersionUpdateService.CurrentVersionText}).";
+        _updateButton.Text = _availableRelease is not null && VersionUpdateService.IsNewer(_availableRelease)
+            ? _availableRelease.DirectGitHubAvailable ? $"Cập nhật lên {_availableRelease.Tag}" : $"Kiểm tra lại mạng để cập nhật {_availableRelease.Tag}"
+            : "Kiểm tra cập nhật";
         _headerCloud.Text = connected ? "Google: đã kết nối" : reconnect ? "Google: cần kết nối lại" : "Google: local/offline";
         _headerVersion.Text = VersionUpdateService.CurrentVersionText;
         RefreshResourceUsage();
@@ -1317,29 +1325,73 @@ internal sealed class MainForm : Form
         try
         {
             _updateButton.Enabled = false;
-            if (_availableRelease is null || !VersionUpdateService.IsNewer(_availableRelease))
+            _versionStatus.Text = "Đang kiểm tra bản cập nhật...";
+            _availableRelease = await VersionUpdateService.GetLatestAsync();
+            if (_availableRelease is null)
             {
-                _versionStatus.Text = "Đang kiểm tra bản cập nhật (GitHub, có Google dự phòng)...";
-                _availableRelease = await VersionUpdateService.GetLatestAsync();
-                if (_availableRelease is null) { _versionStatus.Text = "Chưa có bản phát hành hợp lệ để cập nhật tự động."; return; }
-                RefreshSettings();
-                if (!VersionUpdateService.IsNewer(_availableRelease)) { MessageBox.Show(this, "Ứng dụng đang ở phiên bản mới nhất.", "Cập nhật phiên bản"); return; }
-                var notes = string.IsNullOrWhiteSpace(_availableRelease.Notes) ? "Không có ghi chú phát hành." : _availableRelease.Notes;
-                if (notes.Length > 2500) notes = notes[..2500] + "...";
-                if (MessageBox.Show(this, $"Có phiên bản {_availableRelease.Tag}.\n\n{notes}\n\nTải và cập nhật ngay?", "Có bản cập nhật", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return;
+                _versionStatus.Text = "Chưa có bản phát hành hợp lệ để cập nhật.";
+                return;
             }
+
+            RefreshSettings();
+            if (!VersionUpdateService.IsNewer(_availableRelease))
+            {
+                MessageBox.Show(this, "Ứng dụng đang ở phiên bản mới nhất.", "Cập nhật phiên bản");
+                return;
+            }
+
+            var notes = string.IsNullOrWhiteSpace(_availableRelease.Notes)
+                ? "Không có ghi chú phát hành."
+                : _availableRelease.Notes;
+            if (notes.Length > 2500) notes = notes[..2500] + "...";
+
+            if (!_availableRelease.DirectGitHubAvailable)
+            {
+                _versionStatus.Text = $"Có bản mới {_availableRelease.Tag}, nhưng mạng hiện tại không truy cập GitHub.";
+                MessageBox.Show(
+                    this,
+                    $"Có phiên bản {_availableRelease.Tag}.\n\n{notes}\n\n" +
+                    "Mạng hiện tại vẫn kiểm tra được phiên bản qua Google Gateway, nhưng ứng dụng KHÔNG tải file cập nhật qua Google Drive.\n\n" +
+                    "Hãy chuyển sang mạng có kết nối Internet và truy cập được GitHub, sau đó bấm kiểm tra/cập nhật lại.",
+                    "Có bản cập nhật — cần mạng truy cập GitHub",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (MessageBox.Show(
+                    this,
+                    $"Có phiên bản {_availableRelease.Tag}.\n\n{notes}\n\nTải trực tiếp từ GitHub và cập nhật ngay?",
+                    "Có bản cập nhật",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Information) != DialogResult.Yes)
+                return;
+
             var progress = new Progress<string>(text => _versionStatus.Text = text);
             var script = await VersionUpdateService.DownloadAndPrepareAsync(_availableRelease, progress);
             _versionStatus.Text = "Đã tải xong. Ứng dụng sẽ đóng, thay phiên bản và mở lại.";
-            MessageBox.Show(this, "Bản cập nhật đã tải xong. Ứng dụng sẽ đóng và mở lại tự động. Nếu Windows/EDR chặn thay EXE, bản hiện tại vẫn được giữ.", "Sẵn sàng cập nhật", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(
+                this,
+                "Bản cập nhật đã tải trực tiếp từ GitHub. Ứng dụng sẽ đóng và mở lại tự động. Nếu Windows/EDR chặn thay EXE, bản hiện tại vẫn được giữ.",
+                "Sẵn sàng cập nhật",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
             VersionUpdateService.LaunchUpdaterAndExit(script);
         }
         catch (Exception ex)
         {
             _versionStatus.Text = "Cập nhật tự động chưa hoàn tất.";
-            MessageBox.Show(this, ex.Message + "\n\nỨng dụng đã thử cả GitHub và Google Drive dự phòng. Hãy kiểm tra mạng rồi thử lại.", "Không thể tự cập nhật", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(
+                this,
+                ex.Message + "\n\nCập nhật chỉ tải từ GitHub. Nếu đang dùng mạng Office hoặc mạng chặn GitHub, hãy chuyển sang mạng có Internet và truy cập được GitHub rồi thử lại.",
+                "Không thể tự cập nhật",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
         }
-        finally { _updateButton.Enabled = true; }
+        finally
+        {
+            _updateButton.Enabled = true;
+        }
     }
 
     private void RefreshActiveTab()
