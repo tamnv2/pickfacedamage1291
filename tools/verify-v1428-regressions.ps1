@@ -12,6 +12,10 @@ function Forbid-Text([string]$Path, [string]$Needle, [string]$Message) {
     if ($text.Contains($Needle)) { throw $Message }
 }
 
+function Require-MissingPath([string]$Path, [string]$Message) {
+    if (Test-Path $Path) { throw $Message }
+}
+
 $src = 'src/PickfaceDamage1291'
 
 Require-Text "$src/GoogleGatewayV140.cs" 'GATEWAY_NON_JSON_RESPONSE' 'Missing HTML/non-JSON gateway guard.'
@@ -28,6 +32,17 @@ Require-Text "$src/RuntimeConfigService.cs" 'StartBackgroundRefresh' 'Startup ne
 Require-Text "$src/SessionBootstrap.cs" 'profile_reused' 'Login bootstrap no longer avoids the duplicate profile read.'
 Require-Text "$src/Program.cs" 'DurableAuditQueue.Enqueue(session, "LOGOUT"' 'Logout audit is no longer queued locally.'
 Forbid-Text "$src/Program.cs" 'FirebaseClient.AppendAuditAsync(session, "LOGOUT"' 'Regression: logout blocks on remote audit again.'
+
+Require-Text "$src/VersionUpdateServiceV2.cs" 'DirectGitHubAvailable' 'Updater no longer distinguishes GitHub-download availability from metadata-only fallback.'
+Require-Text "$src/VersionUpdateServiceV2.cs" 'release_metadata' 'Updater no longer uses the lightweight metadata-only Google Gateway fallback.'
+Require-Text "$src/VersionUpdateServiceV2.cs" 'Ứng dụng không tải bản cập nhật qua Google Drive' 'Updater warning no longer states that Google Drive download fallback is disabled.'
+Forbid-Text "$src/VersionUpdateServiceV2.cs" 'release_mirror_chunk' 'Regression: updater can download release chunks through Google Drive again.'
+Forbid-Text "$src/VersionUpdateServiceV2.cs" 'DownloadFromGoogleMirrorAsync' 'Regression: Google Drive release download fallback returned.'
+Require-Text "$src/MainFormV3.cs" 'Mạng hiện tại vẫn kiểm tra được phiên bản qua Google Gateway' 'Office-network update notice is missing.'
+Require-Text "apps-script/GoogleGateway/HardDeleteV1410.gs" "release_metadata" 'Gateway no longer exposes metadata-only update detection.'
+Require-Text "apps-script/GoogleGateway/ReleaseMetadataV1432.gs" "drive_mirror: false" 'Metadata proxy no longer explicitly disables Drive mirroring.'
+Require-MissingPath "apps-script/GoogleGateway/ReleaseMirrorV1411.gs" 'Regression: obsolete Google Drive release mirror implementation exists again.'
+Require-MissingPath ".github/workflows/warm-release-mirror.yml" 'Regression: automatic Google Drive release mirror workflow exists again.'
 
 Require-Text "$src/CloudSyncService.cs" 'PullReportsOnlyAsync' 'Missing report-only smart sync path.'
 Require-Text "$src/V142Runtime.cs" 'PullReportsOnlyAsync(progress, TimeSpan.FromSeconds(30), ct)' 'Network recovery regressed to a heavier shared-data pull.'
