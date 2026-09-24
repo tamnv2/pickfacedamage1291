@@ -1,6 +1,6 @@
 # HANDOVER CURRENT — PICKFACE DAMAGE 1291
 
-Cập nhật: 19/09/2026
+Cập nhật: 24/09/2026
 
 ## 1. Phạm vi cố định
 
@@ -102,3 +102,21 @@ NEXT ACTION:
 4. Sang phiên chat mới, chỉ cần yêu cầu: **"Đọc docs/handovers/HANDOVER_CURRENT.md, kiểm tra live rồi tiếp tục theo yêu cầu mới."**
 
 Nếu test phát sinh lỗi, đọc log mới nhất trong thư mục Logs thuộc Drive root cố định và xử lý từ trạng thái main/release hiện tại; không quay lại logic mirror cũ.
+
+
+## 9. Tối ưu ảnh upload Google Drive — v1.4.33
+
+OWNER chốt tối ưu ảnh sau khi kiểm tra trực tiếp dung lượng Drive:
+- Ảnh local gốc **không bị sửa/ghi đè**.
+- Chỉ tối ưu payload trước khi upload Drive.
+- Ảnh đã nhẹ (<= 1 MiB và cạnh dài <= 2560 px) giữ nguyên byte, không nén lại.
+- Ảnh lớn được resize giữ nguyên tỷ lệ, cạnh dài tối đa **2560 px**.
+- Payload tối ưu lưu dạng **JPEG quality 90%**; không ép cứng xuống 1 MB.
+- PNG lớn được chuyển sang JPEG trước khi upload, nền trong suốt được đặt nền trắng.
+- Nếu ảnh sau tối ưu không nhỏ hơn ảnh gốc thì dùng nguyên ảnh gốc.
+- HEIC/WEBP hoặc codec không đọc được sẽ fallback upload nguyên file, không làm mất phiếu.
+- EXIF orientation được chuẩn hóa khi phải tái mã hóa ảnh.
+- Log `IMAGE_UPLOAD_OPTIMIZED` ghi dung lượng/kích thước trước-sau; không ghi nội dung ảnh hay credential.
+- Dữ liệu ảnh đã có trên Drive **không bị sửa/xóa**.
+
+Release mục tiêu: **v1.4.33**. Build/release sẽ được xác nhận lại sau GitHub Actions.

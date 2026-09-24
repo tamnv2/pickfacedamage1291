@@ -78,10 +78,25 @@ internal static class GoogleService
                     {
                         if (!File.Exists(image.LocalPath))
                             throw new FileNotFoundException("Không tìm thấy ảnh trên máy để đồng bộ.", image.LocalPath);
-                        var bytes = await File.ReadAllBytesAsync(image.LocalPath);
-                        base64 = Convert.ToBase64String(bytes);
-                        mimeType = GetMimeType(image.LocalPath);
-                        originalName = Path.GetFileName(image.LocalPath);
+                        var prepared = await ImageUploadOptimizer.PrepareAsync(image.LocalPath);
+                        base64 = Convert.ToBase64String(prepared.Bytes);
+                        mimeType = prepared.MimeType;
+                        originalName = prepared.FileName;
+
+                        if (prepared.Optimized)
+                        {
+                            AppLog.Info("IMAGE_UPLOAD_OPTIMIZED", "Đã tối ưu ảnh trước khi upload Google Drive, giữ nguyên file local.", new Dictionary<string, object?>
+                            {
+                                ["report_id"] = report.ReportId,
+                                ["sequence"] = image.Sequence,
+                                ["original_bytes"] = prepared.OriginalBytes,
+                                ["upload_bytes"] = prepared.Bytes.LongLength,
+                                ["original_size"] = $"{prepared.OriginalWidth}x{prepared.OriginalHeight}",
+                                ["upload_size"] = $"{prepared.UploadWidth}x{prepared.UploadHeight}",
+                                ["quality"] = ImageUploadOptimizer.JpegQuality,
+                                ["max_long_edge"] = ImageUploadOptimizer.MaxLongEdge
+                            });
+                        }
                     }
 
                     imagePayload.Add(new
