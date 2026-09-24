@@ -119,4 +119,17 @@ OWNER chốt tối ưu ảnh sau khi kiểm tra trực tiếp dung lượng Driv
 - Log `IMAGE_UPLOAD_OPTIMIZED` ghi dung lượng/kích thước trước-sau; không ghi nội dung ảnh hay credential.
 - Dữ liệu ảnh đã có trên Drive **không bị sửa/xóa**.
 
-Release mục tiêu: **v1.4.33**. Build/release sẽ được xác nhận lại sau GitHub Actions.
+Release **v1.4.33** đã hoàn tất:
+- Main commit: `7e9cbb475bb5778d989c8ae3d8be097704a5e98c`
+- Build Windows Portable: **PASS**
+- Publish Windows Release: **PASS**
+- Asset: `PickfaceDamage1291-win-x64-v1.4.33.zip`
+- Asset size: **71,656,075 bytes**
+- SHA-256: `d47d18a8abde83050d46f4e6746dbc9368b96f4c16ddab7d79d3ff8dc1e72bee`
+- Google Apps Script không cần thay đổi/deploy cho tối ưu này; xử lý nằm ở Windows client trước khi gửi payload.
+
+NEXT ACTION:
+1. OWNER cập nhật lên v1.4.33.
+2. Tạo 1 phiếu thử với PNG lớn và kiểm tra ảnh trên Drive + khả năng zoom thực tế.
+3. Đối chiếu log `IMAGE_UPLOAD_OPTIMIZED` để xem dung lượng trước/sau.
+4. Nếu ảnh thực tế đạt chất lượng, giữ cấu hình 2560 px / JPEG 90%.
