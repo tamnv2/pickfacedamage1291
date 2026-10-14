@@ -2,11 +2,11 @@
   "schema_version": 1,
   "change_id": "PFD-001",
   "source_repo": "tamnv2/pickfacedamage1291",
-  "working_branch": "main",
+  "working_branch": "work/pfd-001-cloud-run-migration",
   "pr": null,
   "accepted_base": "v1.4.33; not independently field verified this turn",
   "deployment_gate": "Owner-approved B/C migration; separate Owner approval required for destructive data actions or access-right changes",
-  "last_checkpoint": "PFD-001-E007",
+  "last_checkpoint": "PFD-001-E008",
   "entries": [
     {
       "id": "PFD-001-E001",
@@ -130,6 +130,26 @@
       "evidence": [
         "https://github.com/tamnv2/pickfacedamage1291/commit/0618eb5b6133eac9646f50d6c8bb339926fe27ef"
       ]
+    },
+    {
+      "id": "PFD-001-E008",
+      "date_vn": "2026-10-14",
+      "topic": "Cloud Run staging backend source after A done",
+      "kind": "STATUS",
+      "status": "SOURCE_STAGED_READ_ONLY_UNTESTED_NOT_DEPLOYED",
+      "owner_approval": null,
+      "facts": [
+        "Started B after A successful commit/readback",
+        "Added Node 22 Cloud Run service project-pinned, JWT crypto verification, in-scope Google Sheets/Drive read adapters, read-only release metadata and health checks",
+        "Gateway mutation actions intentionally reject; legacy traffic not redirected; no Cloud Run infrastructure deployed",
+        "New Node test GitHub Actions workflow added, execution not yet verified"
+      ],
+      "next_action": "Run tests/check CI and implement remaining B write contract safely; GCP tool and authorized Drive service identity remain blockers",
+      "evidence": [
+        "cloud-run/server.mjs",
+        "cloud-run/model.mjs",
+        "cloud-run/model.test.mjs"
+      ]
     }
   ],
   "resume": {
@@ -142,17 +162,22 @@
       "A: governance manifest/context/scope/state/decisions/continuity journal/structural guard committed and read back"
     ],
     "in_progress": [
-      "B Cloud Run Gateway replacement source engineering"
+      "B read-only source staged; write/API parity, Windows, GCP deploy and field verification pending"
     ],
     "pending_approval": [
       "Permission grants / OAuth credential changes before live Drive access",
       "Any destructive deletion of old Apps Script, data or services"
     ],
-    "blocked": [],
+    "blocked": [
+      "Google Cloud Run provider deploy access and project identity not available in current tools",
+      "Owner-only Drive service access grant not approved yet"
+    ],
     "next_actions": [
-      "Develop and test B in authorized repo",
-      "Verify GCP deployment access and Google Drive identity; request specific owner permission if needed",
-      "Implement C after B"
+      "Verify and test read-only Cloud Run source at exact branch SHA",
+      "Implement all mutating Gateway actions with distributed locks/idempotent writes; migrate aliases and counters",
+      "Update Windows app Gateway domain trust and direct Firebase routing; build and regression test",
+      "Verify in-project Cloud Run permissions/provider readiness then deploy after required approval",
+      "Only after B deployment+field verification, implement C dashboard"
     ],
     "release_boundary": "No production release evidence and no unauthorized resource/permission changes"
   }
