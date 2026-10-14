@@ -13,11 +13,11 @@
   "working": {
     "branch": "main",
     "pr": null,
-    "docs_a": "IN_PROGRESS_UNTIL_COMMIT_READBACK",
-    "cloud_run_b": "APPROVED_PENDING_IMPLEMENTATION",
+    "docs_a": "DONE_COMMITTED_AND_READBACK_STRUCTURE_VALIDATED",
+    "cloud_run_b": "APPROVED_IMPLEMENTATION_NEXT",
     "usage_dashboard_c": "APPROVED_PENDING_B",
     "deploy": "NOT_PERFORMED",
-    "ci": "NOT_RUN",
+    "ci": "CI_WORKFLOW_COMMITTED_RUN_RESULT_NOT_AVAILABLE",
     "runtime": "NOT_VERIFIED",
     "field": "NOT_VERIFIED"
   },
@@ -29,7 +29,7 @@
     ],
     "must_finish_current_before_next": true,
     "release_boundary": "Owner authorized migration and rollout in this workstream; no destructive deletion or permission grants without explicit separate OWNER direction",
-    "last_checkpoint": "PFD-001-E006"
+    "last_checkpoint": "PFD-001-E007"
   },
   "blockers": [
     "Cloud Run deployment requires GCP project-scoped deploy access; current connector availability unverified",
@@ -37,8 +37,8 @@
     "Network Office explicitly accepted as potentially unavailable"
   ],
   "next_actions": [
-    "Commit/read-back governance files and validate structure => A done",
-    "Implement/test Cloud Run backend and new Windows client with source/CI evidence => B",
-    "Replace old usage view and measure provider usage/free-tier => C"
+    "Implement B Cloud Run backend, Windows route and tests; Cloud provider actions require project-scoped GCP access and any permission changes require Owner approval",
+    "C usage UI after B verified",
+    "Preserve legacy Apps Script until tested and explicitly approved for retirement"
   ]
 }

@@ -6,7 +6,7 @@
   "pr": null,
   "accepted_base": "v1.4.33; not independently field verified this turn",
   "deployment_gate": "Owner-approved B/C migration; separate Owner approval required for destructive data actions or access-right changes",
-  "last_checkpoint": "PFD-001-E006",
+  "last_checkpoint": "PFD-001-E007",
   "entries": [
     {
       "id": "PFD-001-E001",
@@ -112,6 +112,24 @@
         "docs/CHANGE_CONTINUITY_PROTOCOL.md",
         "ops/authority-manifest.json"
       ]
+    },
+    {
+      "id": "PFD-001-E007",
+      "date_vn": "2026-10-14",
+      "topic": "A repo-first governance committed and verified",
+      "kind": "TEST",
+      "status": "A_DONE_REPO_READBACK_PASS_CI_UNVERIFIED",
+      "owner_approval": null,
+      "facts": [
+        "Initial A commit 0618eb5b6133eac9646f50d6c8bb339926fe27ef contains 10 governance files and Python+GitHub Actions structural guard",
+        "Main readback verified all 10 new file contents, correct project/Drive/repository scopes, unique journal IDs and exact state pointer",
+        "Existing PROJECT_SCOPE_LOCK.md and docs/handovers/HANDOVER_CURRENT.md also verified available",
+        "No claim that GitHub Action job has finished or every historical chat has been auto-captured"
+      ],
+      "next_action": "Proceed to B source engineering; do not claim backend deployment without provider evidence",
+      "evidence": [
+        "https://github.com/tamnv2/pickfacedamage1291/commit/0618eb5b6133eac9646f50d6c8bb339926fe27ef"
+      ]
     }
   ],
   "resume": {
@@ -120,9 +138,11 @@
       "B Cloud Run full Gateway replacement",
       "C Cloud Run usage dashboard"
     ],
-    "implemented": [],
+    "implemented": [
+      "A: governance manifest/context/scope/state/decisions/continuity journal/structural guard committed and read back"
+    ],
     "in_progress": [
-      "A governance commit verification"
+      "B Cloud Run Gateway replacement source engineering"
     ],
     "pending_approval": [
       "Permission grants / OAuth credential changes before live Drive access",
@@ -130,8 +150,8 @@
     ],
     "blocked": [],
     "next_actions": [
-      "Commit and readback A",
-      "Implement B in scoped repo/GCP only when A is done",
+      "Develop and test B in authorized repo",
+      "Verify GCP deployment access and Google Drive identity; request specific owner permission if needed",
       "Implement C after B"
     ],
     "release_boundary": "No production release evidence and no unauthorized resource/permission changes"
