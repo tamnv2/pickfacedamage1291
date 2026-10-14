@@ -21,7 +21,8 @@
     "runtime": "NOT_VERIFIED",
     "field": "NOT_VERIFIED",
     "coexistence": "APPROVED_LEGACY_STAYS_ACTIVE_WHILE_NEW_CLOUD_RUN_TESTS",
-    "isolation": "DATA_AND_ACTIVE_OPERATOR_SEPARATION_PROPOSED_NOT_IMPLEMENTED"
+    "isolation": "OWNER_APPROVED_V2_SEPARATE_WRITES_LEGACY_READ_ONLY__NOT_IMPLEMENTED",
+    "gcp_bootstrap": "SCOPED_OWNER_CHECKLIST_COMMITTED__PERMISSIONS_NOT_GRANTED_OR_VERIFIED"
   },
   "change_control": {
     "serial_order": [
@@ -31,17 +32,19 @@
     ],
     "must_finish_current_before_next": true,
     "release_boundary": "Owner authorized migration and rollout in this workstream; no destructive deletion or permission grants without explicit separate OWNER direction",
-    "last_checkpoint": "PFD-001-E011"
+    "last_checkpoint": "PFD-001-E012"
   },
   "blockers": [
-    "No connected Google Cloud Run project-scoped tool or verified deployment identity in current toolset",
-    "My Drive Google Sheets/Drive permission grant needed; no change allowed without explicit OWNER command",
-    "Gateway write parity, username alias migration, distributed lock/queue, Windows release not implemented; Cloud Run staging endpoint must not become live"
+    "Google Cloud project pickface-damage-1291 billing, API and IAM cannot be inspected directly with available GCP tools",
+    "No scoped GitHub OIDC WIF deployment identity yet verified for this repo, and no project-only access grant verified",
+    "My Drive owner OAuth consent and secure Secret Manager storage required for new image/folder creation; not configured or granted",
+    "Cloud Run public test HTTPS transport + Firebase active-user authentication requires explicit approval",
+    "Full Gateway parity/isolated write transactions/Windows V2 code unfinished; no deployment authorized yet"
   ],
   "next_actions": [
-    "Keep legacy Apps Script endpoint, legacy runtime-config and stable GitHub release unchanged during trial",
-    "Implement Cloud Run test without altering legacy Sheets writes or singleton active_operator; validate isolation design",
-    "Retire legacy Gateway only on a new explicit OWNER command after successful test",
-    "Complete B before C"
+    "Await OWNER-only billing confirmation and narrowly scoped GCP IAM/WIF OAuth setup as in docs/plans/PFD-001_CLOUD_RUN_BOOTSTRAP.md",
+    "After permissions confirmed, implement Cloud Run V2 read legacy / write separately with idempotency, distinct operator lease and secure OAuth; run CI",
+    "Report CODE_READY for explicit OWNER view and deployment decision",
+    "Do not affect stable Windows release/runtime config/GAS until later explicit order; C only after B"
   ]
 }
