@@ -47,3 +47,8 @@ Trước mọi thao tác ghi/xoá/deploy/cấp quyền phải xác minh lại:
 Các thao tác phá huỷ dữ liệu, xoá tài nguyên hoặc thay đổi quyền truy cập phải có yêu cầu rõ ràng của OWNER trước khi thực hiện.
 
 Repository là **PUBLIC**. Tuyệt đối không commit secret hoặc thông tin xác thực vào source code.
+
+
+Ngoại lệ cho mục A: Cho phép AI truy cập repository tamnv2/supra-inventory với quyền chỉ đọc, duy nhất để tham khảo cơ chế lưu trữ lịch sử trao đổi, quyết định, backlog và trạng thái triển khai.
+Nghiêm cấm ghi, sửa, xoá, deploy hoặc thao tác tài nguyên liên quan đến repository báo hàng.
+Mọi thay đổi chỉ được thực hiện trong tamnv2/pickfacedamage1291 và các tài nguyên đã được cấp phép của PICKFACE DAMAGE 1291.
