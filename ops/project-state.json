@@ -11,13 +11,13 @@
     "owner_pass": "NOT_VERIFIED_THIS_TURN"
   },
   "working": {
-    "branch": "main",
-    "pr": null,
+    "branch": "work/pfd-001-cloud-run-migration",
+    "pr": 22,
     "docs_a": "DONE_COMMITTED_AND_READBACK_STRUCTURE_VALIDATED",
-    "cloud_run_b": "APPROVED_IMPLEMENTATION_NEXT",
+    "cloud_run_b": "PARTIAL_READ_ONLY_SOURCE_CI_PASS_IN_DRAFT_PR_22_NOT_DEPLOYED",
     "usage_dashboard_c": "APPROVED_PENDING_B",
     "deploy": "NOT_PERFORMED",
-    "ci": "CI_WORKFLOW_COMMITTED_RUN_RESULT_NOT_AVAILABLE",
+    "ci": "PR_22_READ_ONLY_SOURCE_NODE_AND_MEMORY_GUARD_PASS_EXACT_SHA_41537fb5; DRAFT_HEAD_NOW_6e6cd5ea",
     "runtime": "NOT_VERIFIED",
     "field": "NOT_VERIFIED"
   },
@@ -29,16 +29,17 @@
     ],
     "must_finish_current_before_next": true,
     "release_boundary": "Owner authorized migration and rollout in this workstream; no destructive deletion or permission grants without explicit separate OWNER direction",
-    "last_checkpoint": "PFD-001-E007"
+    "last_checkpoint": "PFD-001-E010"
   },
   "blockers": [
-    "Cloud Run deployment requires GCP project-scoped deploy access; current connector availability unverified",
-    "Cloud Run Drive identity must be authorized without credential disclosure; grants require explicit OWNER instruction",
-    "Network Office explicitly accepted as potentially unavailable"
+    "No connected Google Cloud Run project-scoped tool/deployment identity available",
+    "Owner-only permission changes for Drive Sheets/Drive from Cloud Run service identity pending",
+    "Full Gateway mutation/auth alias/Windows parity not implemented; Draft PR must remain unmerged"
   ],
   "next_actions": [
-    "Implement B Cloud Run backend, Windows route and tests; Cloud provider actions require project-scoped GCP access and any permission changes require Owner approval",
-    "C usage UI after B verified",
-    "Preserve legacy Apps Script until tested and explicitly approved for retirement"
+    "Read working Draft PR #22 at current HEAD before any next response",
+    "Continue write-action/idempotency/auth migration under PFD-001 B",
+    "Verify exact-head CI and Cloud Run project/Drive access before live deploy",
+    "C usage dashboard remains blocked until B deployed and validated"
   ]
 }

@@ -2,11 +2,11 @@
   "schema_version": 1,
   "change_id": "PFD-001",
   "source_repo": "tamnv2/pickfacedamage1291",
-  "working_branch": "main",
-  "pr": null,
+  "working_branch": "work/pfd-001-cloud-run-migration",
+  "pr": 22,
   "accepted_base": "v1.4.33; not independently field verified this turn",
   "deployment_gate": "Owner-approved B/C migration; separate Owner approval required for destructive data actions or access-right changes",
-  "last_checkpoint": "PFD-001-E007",
+  "last_checkpoint": "PFD-001-E010",
   "entries": [
     {
       "id": "PFD-001-E001",
@@ -130,6 +130,25 @@
       "evidence": [
         "https://github.com/tamnv2/pickfacedamage1291/commit/0618eb5b6133eac9646f50d6c8bb339926fe27ef"
       ]
+    },
+    {
+      "id": "PFD-001-E010",
+      "date_vn": "2026-10-14",
+      "topic": "MAIN accepted-base pointer to active B Draft PR",
+      "kind": "STATUS",
+      "status": "ACTIVE_DRAFT_PR22__A_DONE__B_PARTIAL_CI_PASS__C_PENDING",
+      "owner_approval": null,
+      "facts": [
+        "A governance files committed and read back to main",
+        "B started on work/pfd-001-cloud-run-migration Draft PR #22; source-only read-only Gateway stage",
+        "CI on initial B source commit successful but working branch later has state-only receipt commit; exact newest SHA CI needs recheck",
+        "B is not deployed; old Apps Script still operational; C not started"
+      ],
+      "next_action": "Bootstrap main then PR #22 and exact HEAD at next project continuation",
+      "evidence": [
+        "https://github.com/tamnv2/pickfacedamage1291/pull/22",
+        "https://github.com/tamnv2/pickfacedamage1291/commit/41537fb5a9508372d171a68df6b941714682f1b6"
+      ]
     }
   ],
   "resume": {
@@ -139,20 +158,26 @@
       "C Cloud Run usage dashboard"
     ],
     "implemented": [
-      "A: governance manifest/context/scope/state/decisions/continuity journal/structural guard committed and read back"
+      "A: governance manifest/context/scope/state/decisions/continuity journal/structural guard committed and read back",
+      "A complete and read back; accepted baseline remains v1.4.33"
     ],
     "in_progress": [
-      "B Cloud Run Gateway replacement source engineering"
+      "B Draft PR22 staged READ-ONLY source tests PASS, full parity/deployment pending"
     ],
     "pending_approval": [
       "Permission grants / OAuth credential changes before live Drive access",
       "Any destructive deletion of old Apps Script, data or services"
     ],
-    "blocked": [],
+    "blocked": [
+      "No connected Google Cloud Run project-scoped tool/deployment identity available",
+      "Owner-only permission changes for Drive Sheets/Drive from Cloud Run service identity pending",
+      "Full Gateway mutation/auth alias/Windows parity not implemented; Draft PR must remain unmerged"
+    ],
     "next_actions": [
-      "Develop and test B in authorized repo",
-      "Verify GCP deployment access and Google Drive identity; request specific owner permission if needed",
-      "Implement C after B"
+      "Read working Draft PR #22 at current HEAD before any next response",
+      "Continue write-action/idempotency/auth migration under PFD-001 B",
+      "Verify exact-head CI and Cloud Run project/Drive access before live deploy",
+      "C usage dashboard remains blocked until B deployed and validated"
     ],
     "release_boundary": "No production release evidence and no unauthorized resource/permission changes"
   }
