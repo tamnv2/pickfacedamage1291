@@ -20,3 +20,11 @@ Authority: explicit OWNER commands and evidence stored in this repository. This 
 - Cloud Run Google Drive/Sheets authority for current fixed root (My Drive vs Shared Drive); any OAuth/grant must be OWNER-approved and server-side only.
 - How to preserve Apps Script `PropertiesService` username aliases and change sequence safely without moving files out of scope?
 - How to measure CPU/RAM and shared Billing Account allowance without inspecting any other GCP project?
+
+## 2026-10-14 — Chạy song song Gateway cũ và Cloud Run (OWNER chốt)
+
+- Máy cài bản Windows cũ tiếp tục sử dụng Apps Script Gateway, tài khoản và dữ liệu hiện tại khi quota còn khả dụng; không tự thay URL Gateway hoặc phát hành bản stable bắt buộc nâng cấp.
+- Bản mới sẽ kiểm thử qua Cloud Run song song. OWNER chấp nhận khả năng tạo phiếu trùng, nhưng không chấp nhận mất dữ liệu, ghi đè sai, phá hủy tài nguyên hay vô tình chặn máy cũ.
+- Chỉ vô hiệu hóa nghiệp vụ của Gateway cũ sau khi Cloud Run đã kiểm thử đạt yêu cầu **và có lệnh mới, rõ ràng của OWNER**. Không xóa dữ liệu, dự án hay ứng dụng cũ trong đợt thử nghiệm.
+- Trước khi thử ghi, cần thống nhất phương án tránh xung đột khi hai hệ thống dùng chung Google Sheets (Apps Script LockService không khóa Cloud Run), bộ đếm change_seq và Firebase active_operator. Đề xuất tách vùng ghi thử nghiệm và trạng thái lease cho bản mới; thiết kế chi tiết còn chờ duyệt.
+- Trong giai đoạn chạy song song, dự án vẫn tiêu thụ UrlFetchApp từ máy cũ; không được báo đã về 0 trước khi ngừng thực tế.
