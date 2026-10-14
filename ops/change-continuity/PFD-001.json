@@ -6,7 +6,7 @@
   "pr": 22,
   "accepted_base": "v1.4.33; not independently field verified this turn",
   "deployment_gate": "Owner-approved B/C migration; separate Owner approval required for destructive data actions or access-right changes",
-  "last_checkpoint": "PFD-001-E011",
+  "last_checkpoint": "PFD-001-E012",
   "entries": [
     {
       "id": "PFD-001-E001",
@@ -197,6 +197,38 @@
         "src/PickfaceDamage1291/OperatorLeaseManager.cs",
         "src/PickfaceDamage1291/RuntimeConfigService.cs"
       ]
+    },
+    {
+      "id": "PFD-001-E012",
+      "date_vn": "2026-10-14",
+      "topic": "OWNER confirms V2 own writes + read-only old history and requests GCP bootstrap access audit",
+      "kind": "DECISION",
+      "status": "APPROVED_DESIGN__OWNER_ONLY_CLOUD_GRANTS_PENDING",
+      "owner_approval": true,
+      "facts": [
+        "Cloud Run V2 can read but not alter old Sheets/Drive history; V2 writes new separate test records; old Windows clients must only use old data until future explicit retirement",
+        "Verified scoped Drive root is My Drive (driveId null) with one user owner; service account cannot own/upload new files in My Drive without end-user OAuth or shared-drive ownership; owner OAuth within this project is proposed",
+        "No GCP connector available to this session; recommended GitHub OIDC Workload Identity Federation restricted to this exact repo and trial deployment branch; no shared service-account keys or public repo secrets",
+        "Billing, IAM, API enables, OAuth consent, Cloud Run public transport setting all require explicit OWNER permission or execution; no such change has yet been applied",
+        "Stage B source/code only after permissions are ready; complete and present CODE_READY for OWNER before deployment; no stable auto-upgrade or disabling legacy GAS"
+      ],
+      "alternatives": [
+        "User-owned My Drive OAuth via project-bound Secret Manager; preferred",
+        "A new project-local cloud-storage test data backend after explicit Owner approval; not approved and not equivalent to existing Drive model",
+        "Moving to Shared Drive would change resource scope; not approved"
+      ],
+      "open_questions": [
+        "Is Cloud Billing active in project pickface-damage-1291?",
+        "Can OWNER create service accounts, exact-repo WIF and project-only container repo?",
+        "Can OWNER authorize My Drive user OAuth and approve secret storage in this GCP project?",
+        "Will OWNER permit public HTTPS Cloud Run transport for test service secured by Firebase auth?"
+      ],
+      "next_action": "OWNER grants/reports project-only bootstrap checks without posting any secrets; then code B and obtain CODE_READY/approval prior to actual deployment",
+      "evidence": [
+        "docs/plans/PFD-001_CLOUD_RUN_BOOTSTRAP.md",
+        "docs/OWNER_DECISIONS.md",
+        "Google Drive metadata scoped to root and its direct children"
+      ]
     }
   ],
   "resume": {
@@ -204,7 +236,8 @@
       "A repo-first memory and read-only reference",
       "B Cloud Run full Gateway replacement",
       "C Cloud Run usage dashboard",
-      "Legacy and Cloud Run coexist; retire legacy only after an explicit future Owner command"
+      "Legacy and Cloud Run coexist; retire legacy only after an explicit future Owner command",
+      "OWNER explicitly approved V2 read-only legacy history and V2 separate own writes (old PCs see legacy only)"
     ],
     "implemented": [
       "A: governance manifest/context/scope/state/decisions/continuity journal/structural guard committed and read back",
@@ -212,19 +245,25 @@
     ],
     "in_progress": [
       "B read-only source staged; write/API parity, Windows, GCP deploy and field verification pending",
-      "Coexistence design: isolate new test writes and active operator lease before testing"
+      "Coexistence design: isolate new test writes and active operator lease before testing",
+      "Cloud Run bootstrap/permissions plan authored; GCP permissions not verified or applied"
     ],
     "pending_approval": [
       "Permission grants / OAuth credential changes before live Drive access",
-      "Any destructive deletion of old Apps Script, data or services"
+      "Any destructive deletion of old Apps Script, data or services",
+      "Exact GCP IAM/Workload Identity Federation grants and API enablement",
+      "My Drive OAuth consent and server-side Secret Manager credential storage",
+      "Public HTTPS transport for Cloud Run test service protected by Firebase Auth"
     ],
     "blocked": [
       "Google Cloud Run provider deploy access and project identity not available in current tools",
-      "Owner-only Drive service access grant not approved yet"
+      "Owner-only Drive service access grant not approved yet",
+      "Need OWNER project-only cloud IAM and OAuth setup; no live GCP tools connected"
     ],
     "next_actions": [
-      "Protect old Gateway and old stable release",
-      "Build Cloud Run isolated test mode; C follows B"
+      "OWNER verifies Cloud Billing in exact GCP project and approves exact scoped IAM/OAuth grants",
+      "Once verified, resume B source logic and code READY then Owner review",
+      "No Cloud Run deploy / legacy retirement yet"
     ],
     "release_boundary": "No production release evidence and no unauthorized resource/permission changes"
   }
