@@ -1,6 +1,6 @@
 # PFD-001 — Chạy song song Apps Script Gateway và Cloud Run
 
-**Trạng thái:** OWNER đã chốt nguyên tắc cùng tồn tại và chỉ ngừng Gateway cũ theo lệnh sau này; các chi tiết tách dữ liệu dưới đây là **đề xuất kỹ thuật đang chờ xác nhận**, chưa triển khai.
+**Trạng thái 14/10/2026:** OWNER đã CHỐT mô hình cũ và mới cùng tồn tại; bản V2 ghi dữ liệu riêng, được đọc lịch sử V1 ở chế độ chỉ đọc; V1 chỉ thấy dữ liệu V1. Chưa triển khai Cloud Run. Quyền tạo dữ liệu trên My Drive và GCP IAM/OIDC/OAuth cần OWNER xử lý như `docs/plans/PFD-001_CLOUD_RUN_BOOTSTRAP.md`.
 
 ## Ranh giới vận hành
 
@@ -20,7 +20,7 @@
 | Tài khoản Firebase | `users/{uid}` + `PropertiesService` alias | Đổi email, mật khẩu/khóa user tác động cả hai | Khi test dùng user thử có kiểm soát; không ghi sửa user legacy |
 | Runtime/Update | Windows chỉ chấp nhận `script.google.com`, updater stable GitHub | Cấu hình chung / bản release stable có thể tự chuyển bản cũ | Cloud Run endpoint gắn bản test mới; không thay chính sách stable |
 
-## Phương án khuyến nghị để tránh xung đột nguy hiểm
+## Quyết định OWNER: tách dữ liệu và tránh xung đột nguy hiểm
 
 1. **Legacy giữ nguyên** Google Sheets cũ, Apps Script deployment, Firebase auth/account/lease và image URLs.
 2. **Cloud Run V2 test ghi tách biệt** trong các tab hoặc spreadsheet mới thực sự nằm trong Drive root được cấp phép; đặt tên nguồn/phiếu rõ ràng; riêng asset ảnh/log của V2 nằm dưới subtree đã xác minh.
