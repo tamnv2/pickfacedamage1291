@@ -19,7 +19,9 @@
     "deploy": "NOT_PERFORMED",
     "ci": "READ_ONLY_SOURCE_NODE_TEST_CI_PASS_AND_PROJECT_MEMORY_GUARD_PASS_EXACT_SHA_41537fb5",
     "runtime": "NOT_VERIFIED",
-    "field": "NOT_VERIFIED"
+    "field": "NOT_VERIFIED",
+    "coexistence": "APPROVED_LEGACY_STAYS_ACTIVE_WHILE_NEW_CLOUD_RUN_TESTS",
+    "isolation": "DATA_AND_ACTIVE_OPERATOR_SEPARATION_PROPOSED_NOT_IMPLEMENTED"
   },
   "change_control": {
     "serial_order": [
@@ -29,7 +31,7 @@
     ],
     "must_finish_current_before_next": true,
     "release_boundary": "Owner authorized migration and rollout in this workstream; no destructive deletion or permission grants without explicit separate OWNER direction",
-    "last_checkpoint": "PFD-001-E009"
+    "last_checkpoint": "PFD-001-E011"
   },
   "blockers": [
     "No connected Google Cloud Run project-scoped tool or verified deployment identity in current toolset",
@@ -37,10 +39,9 @@
     "Gateway write parity, username alias migration, distributed lock/queue, Windows release not implemented; Cloud Run staging endpoint must not become live"
   ],
   "next_actions": [
-    "Verify and test read-only Cloud Run source at exact branch SHA",
-    "Implement all mutating Gateway actions with distributed locks/idempotent writes; migrate aliases and counters",
-    "Update Windows app Gateway domain trust and direct Firebase routing; build and regression test",
-    "Verify in-project Cloud Run permissions/provider readiness then deploy after required approval",
-    "Only after B deployment+field verification, implement C dashboard"
+    "Keep legacy Apps Script endpoint, legacy runtime-config and stable GitHub release unchanged during trial",
+    "Implement Cloud Run test without altering legacy Sheets writes or singleton active_operator; validate isolation design",
+    "Retire legacy Gateway only on a new explicit OWNER command after successful test",
+    "Complete B before C"
   ]
 }
