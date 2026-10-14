@@ -6,7 +6,7 @@
   "pr": 22,
   "accepted_base": "v1.4.33; not independently field verified this turn",
   "deployment_gate": "Owner-approved B/C migration; separate Owner approval required for destructive data actions or access-right changes",
-  "last_checkpoint": "PFD-001-E009",
+  "last_checkpoint": "PFD-001-E011",
   "entries": [
     {
       "id": "PFD-001-E001",
@@ -170,20 +170,49 @@
         "https://github.com/tamnv2/pickfacedamage1291/actions/runs/38490902760",
         "https://github.com/tamnv2/pickfacedamage1291/actions/runs/38490902757"
       ]
+    },
+    {
+      "id": "PFD-001-E011",
+      "date_vn": "2026-10-14",
+      "topic": "Owner requested old Apps Script Gateway and Cloud Run coexist during trial",
+      "kind": "OWNER_COMMAND",
+      "status": "APPROVED_REQUIREMENT",
+      "owner_approval": true,
+      "facts": [
+        "Legacy Windows clients and Apps Script Gateway must remain available while quota allows",
+        "New Cloud Run client may operate concurrently; possible duplicate records accepted",
+        "Do not disable legacy Gateway or force old clients to upgrade before a future explicit OWNER retirement command",
+        "Old and new models may conflict if sharing Sheet write rows, independent change counters or Firebase active_operator; data corruption is not authorized"
+      ],
+      "alternatives": [
+        "Isolate v2 test writes, lease and sequence from legacy production",
+        "Shared live write paths require explicit cross-backend synchronization"
+      ],
+      "open_questions": [
+        "Whether trial v2 reads legacy history or is entirely isolated; detailed namespace design"
+      ],
+      "next_action": "Implement new source with legacy stability guard; no old Gateway, runtime-config or stable release change",
+      "evidence": [
+        "apps-script/GoogleGateway/Code.gs",
+        "src/PickfaceDamage1291/OperatorLeaseManager.cs",
+        "src/PickfaceDamage1291/RuntimeConfigService.cs"
+      ]
     }
   ],
   "resume": {
     "approved": [
       "A repo-first memory and read-only reference",
       "B Cloud Run full Gateway replacement",
-      "C Cloud Run usage dashboard"
+      "C Cloud Run usage dashboard",
+      "Legacy and Cloud Run coexist; retire legacy only after an explicit future Owner command"
     ],
     "implemented": [
       "A: governance manifest/context/scope/state/decisions/continuity journal/structural guard committed and read back",
       "B partial read-only backend source contract CI PASS on PR #22; not deployed"
     ],
     "in_progress": [
-      "B read-only source staged; write/API parity, Windows, GCP deploy and field verification pending"
+      "B read-only source staged; write/API parity, Windows, GCP deploy and field verification pending",
+      "Coexistence design: isolate new test writes and active operator lease before testing"
     ],
     "pending_approval": [
       "Permission grants / OAuth credential changes before live Drive access",
@@ -194,11 +223,8 @@
       "Owner-only Drive service access grant not approved yet"
     ],
     "next_actions": [
-      "Verify and test read-only Cloud Run source at exact branch SHA",
-      "Implement all mutating Gateway actions with distributed locks/idempotent writes; migrate aliases and counters",
-      "Update Windows app Gateway domain trust and direct Firebase routing; build and regression test",
-      "Verify in-project Cloud Run permissions/provider readiness then deploy after required approval",
-      "Only after B deployment+field verification, implement C dashboard"
+      "Protect old Gateway and old stable release",
+      "Build Cloud Run isolated test mode; C follows B"
     ],
     "release_boundary": "No production release evidence and no unauthorized resource/permission changes"
   }
