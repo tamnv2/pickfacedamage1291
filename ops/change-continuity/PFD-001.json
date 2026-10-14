@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "change_id": "PFD-001",
+  "source_repo": "tamnv2/pickfacedamage1291",
+  "working_branch": "main",
+  "pr": null,
+  "accepted_base": "v1.4.33; not independently field verified this turn",
+  "deployment_gate": "Owner-approved B/C migration; separate Owner approval required for destructive data actions or access-right changes",
+  "last_checkpoint": "PFD-001-E006",
+  "entries": [
+    {
+      "id": "PFD-001-E001",
+      "date_vn": "2026-10-14",
+      "topic": "Durable history governance",
+      "kind": "OWNER_COMMAND",
+      "status": "APPROVED",
+      "owner_approval": true,
+      "facts": [
+        "OWNER requests repo-first persistent discussion, approvals, backlog and deployment state; never trust assistant memory",
+        "Read-only reference of supra-inventory is specifically permitted; no copied services or resources"
+      ],
+      "next_action": "Implement manifest, journal, decisions, state and guard; verify GitHub write/readback",
+      "evidence": [
+        "PROJECT_SCOPE_LOCK.md; current OWNER instructions"
+      ]
+    },
+    {
+      "id": "PFD-001-E002",
+      "date_vn": "2026-10-14",
+      "topic": "Serial work sequence A B C",
+      "kind": "OWNER_COMMAND",
+      "status": "APPROVED",
+      "owner_approval": true,
+      "facts": [
+        "A must be genuinely DONE before B begins; B migration before C usage replacement",
+        "OWNER previously authorized code and deployment of B/C, with explicit carve-out for destructive and permission changes"
+      ],
+      "next_action": "A commit/readback; then proceed B and C",
+      "evidence": [
+        "Current OWNER workstream"
+      ]
+    },
+    {
+      "id": "PFD-001-E003",
+      "date_vn": "2026-10-14",
+      "topic": "Apps Script complete replacement",
+      "kind": "DECISION",
+      "status": "APPROVED_NOT_IMPLEMENTED",
+      "owner_approval": true,
+      "facts": [
+        "Target Cloud Run in project pickface-damage-1291 / asia-southeast1",
+        "Eliminate all Apps Script Gateway and UrlFetchApp usage from new Windows client and backend",
+        "Keep Google Sheets/Drive in authorized folder, Firebase Auth/RTDB, GitHub-only binary updates",
+        "Office network may be unsupported; no Cloudflare deployment"
+      ],
+      "next_action": "Implement project-isolated backend, Auth/RBAC, Sheets/Drive and Windows client after A done",
+      "evidence": [
+        "src/PickfaceDamage1291/RuntimeConfigService.cs",
+        "apps-script/GoogleGateway/Code.gs"
+      ]
+    },
+    {
+      "id": "PFD-001-E004",
+      "date_vn": "2026-10-14",
+      "topic": "Gateway quota actual measurements",
+      "kind": "TECHNICAL_FINDING",
+      "status": "ANALYZED_NOT_DEPLOYED",
+      "owner_approval": null,
+      "facts": [
+        "25 days of client snapshots, 3 devices, 35,978 Gateway requests",
+        "29,206 rtdb_proxy requests dominated usage",
+        "Approx 100,000 UrlFetchApp calls for 25 days is code-path estimate, not Google quota billing meter"
+      ],
+      "next_action": "Eliminate RTDB relay and Apps Script, then verify old-client cutover",
+      "evidence": [
+        "Drive root authorized spreadsheet AuditHistory USAGE_SNAPSHOT_V146",
+        "apps-script/GoogleGateway/Code.gs"
+      ]
+    },
+    {
+      "id": "PFD-001-E005",
+      "date_vn": "2026-10-14",
+      "topic": "New Cloud Run usage dashboard",
+      "kind": "DECISION",
+      "status": "APPROVED_NOT_IMPLEMENTED",
+      "owner_approval": true,
+      "facts": [
+        "Replace in-app Apps Script usage with Cloud Run CPU, RAM, requests, free-tier remainder only when provider metrics are verified",
+        "Daily watch and projected month-end exceedance; don't invent billing-account-shared allowance",
+        "Prefer request-based min-instances=0 and small scale"
+      ],
+      "next_action": "After B, implement project-limited metrics dashboard with unknown explicitly labelled",
+      "evidence": [
+        "src/PickfaceDamage1291/UsageDashboardV147.cs",
+        "src/PickfaceDamage1291/UsageTelemetry.cs"
+      ]
+    },
+    {
+      "id": "PFD-001-E006",
+      "date_vn": "2026-10-14",
+      "topic": "Initial repo memory bootstrap",
+      "kind": "STATUS",
+      "status": "SOURCE_PREPARED_PENDING_COMMIT_VERIFICATION",
+      "owner_approval": null,
+      "facts": [
+        "Governance files modeled on read-only supra-inventory manifest, working ledger and structural guard",
+        "No Cloud Run provider actions or release in this checkpoint"
+      ],
+      "next_action": "Commit and verify A; update checkpoint to A_DONE only after readback",
+      "evidence": [
+        "AGENTS.md",
+        "docs/CHANGE_CONTINUITY_PROTOCOL.md",
+        "ops/authority-manifest.json"
+      ]
+    }
+  ],
+  "resume": {
+    "approved": [
+      "A repo-first memory and read-only reference",
+      "B Cloud Run full Gateway replacement",
+      "C Cloud Run usage dashboard"
+    ],
+    "implemented": [],
+    "in_progress": [
+      "A governance commit verification"
+    ],
+    "pending_approval": [
+      "Permission grants / OAuth credential changes before live Drive access",
+      "Any destructive deletion of old Apps Script, data or services"
+    ],
+    "blocked": [],
+    "next_actions": [
+      "Commit and readback A",
+      "Implement B in scoped repo/GCP only when A is done",
+      "Implement C after B"
+    ],
+    "release_boundary": "No production release evidence and no unauthorized resource/permission changes"
+  }
+}

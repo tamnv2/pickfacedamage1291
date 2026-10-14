@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "project_key": "pickface-damage-1291",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "repository": "tamnv2/pickfacedamage1291",
+  "updated_vn": "2026-10-14",
+  "current_change": "PFD-001",
+  "accepted_base": {
+    "version": "v1.4.33",
+    "basis": "docs/handovers/HANDOVER_CURRENT.md; repo source has v1.4.33; live installations not verified this turn",
+    "owner_pass": "NOT_VERIFIED_THIS_TURN"
+  },
+  "working": {
+    "branch": "main",
+    "pr": null,
+    "docs_a": "IN_PROGRESS_UNTIL_COMMIT_READBACK",
+    "cloud_run_b": "APPROVED_PENDING_IMPLEMENTATION",
+    "usage_dashboard_c": "APPROVED_PENDING_B",
+    "deploy": "NOT_PERFORMED",
+    "ci": "NOT_RUN",
+    "runtime": "NOT_VERIFIED",
+    "field": "NOT_VERIFIED"
+  },
+  "change_control": {
+    "serial_order": [
+      "A_PROJECT_MEMORY",
+      "B_CLOUD_RUN_GATEWAY_MIGRATION",
+      "C_CLOUD_RUN_USAGE_DASHBOARD"
+    ],
+    "must_finish_current_before_next": true,
+    "release_boundary": "Owner authorized migration and rollout in this workstream; no destructive deletion or permission grants without explicit separate OWNER direction",
+    "last_checkpoint": "PFD-001-E006"
+  },
+  "blockers": [
+    "Cloud Run deployment requires GCP project-scoped deploy access; current connector availability unverified",
+    "Cloud Run Drive identity must be authorized without credential disclosure; grants require explicit OWNER instruction",
+    "Network Office explicitly accepted as potentially unavailable"
+  ],
+  "next_actions": [
+    "Commit/read-back governance files and validate structure => A done",
+    "Implement/test Cloud Run backend and new Windows client with source/CI evidence => B",
+    "Replace old usage view and measure provider usage/free-tier => C"
+  ]
+}

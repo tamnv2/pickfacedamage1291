@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "project_key": "pickface-damage-1291",
+  "authority_model": "REPO_FIRST_CONTINUITY",
+  "bootstrap_order": [
+    "PROJECT_SCOPE_LOCK.md",
+    "AGENTS.md",
+    "docs/CHANGE_CONTINUITY_PROTOCOL.md",
+    "docs/PROJECT_CONTEXT.md",
+    "ops/project-scope.json",
+    "ops/project-state.json",
+    "ops/change-continuity/PFD-001.json",
+    "docs/OWNER_DECISIONS.md",
+    "docs/handovers/HANDOVER_CURRENT.md",
+    "recent_commits_and_ci",
+    "relevant_live_source"
+  ],
+  "canonical_sources": {
+    "scope": "PROJECT_SCOPE_LOCK.md",
+    "context": "docs/PROJECT_CONTEXT.md",
+    "decisions": "docs/OWNER_DECISIONS.md",
+    "state": "ops/project-state.json",
+    "active_journal": "ops/change-continuity/PFD-001.json",
+    "protocol": "docs/CHANGE_CONTINUITY_PROTOCOL.md"
+  },
+  "authority_order": [
+    "current_explicit_OWNER_instruction",
+    "verified_main_and_working_branch_source",
+    "canonical_github_decisions_state_scope",
+    "actual_ci_release_field_evidence",
+    "chat_memory_non_authoritative"
+  ],
+  "update_rules": {
+    "substantive_exchange": "commit a sanitized semantic checkpoint to current working journal; verify commit readback; no mutation => do not claim saved",
+    "owner_decision": "update both journal and docs/OWNER_DECISIONS.md",
+    "source_change": "update journal and ops/project-state.json; attach tests and release evidence separately",
+    "scope_change": "OWNER-specific approval; do not expand PROJECT_SCOPE_LOCK.md by inference",
+    "future_context": "read current main plus any active working branch before response"
+  },
+  "security": {
+    "repo_public": true,
+    "secrets_allowed": false,
+    "copy_resources_from_reference_repo": false,
+    "reference_repo_read_only": "tamnv2/supra-inventory"
+  },
+  "status_vocabulary": [
+    "PROPOSED",
+    "APPROVED",
+    "CODE_IN_PROGRESS",
+    "CODE_READY",
+    "CI_PASS",
+    "DEPLOYED",
+    "RUNTIME_VERIFIED",
+    "FIELD_PASS",
+    "OWNER_PASS",
+    "BLOCKED"
+  ],
+  "guard": "tools/project_memory_guard.py"
+}

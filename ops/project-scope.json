@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "project_key": "pickface-damage-1291",
+  "github_write_repository": "tamnv2/pickfacedamage1291",
+  "github_reference_read_only": {
+    "repository": "tamnv2/supra-inventory",
+    "purpose": "project-memory governance mechanism only"
+  },
+  "drive": {
+    "root_id": "16jDCy5_Z1X5cKJyNPR1rn_ZqbExQSAeC",
+    "allowed": "root and proven descendants only",
+    "spreadsheet_id": "1Ubm9EhALocUovzVr3UIspdCMtHIPm2NPUw6UjlZcqw4",
+    "images_folder_id": "1K_lUl_uE4dskR28cVK4iZJrzFUINfvXf",
+    "logs_folder_id": "1Z19VgAAmCN1u7z_xSSztx9IVuq3kFSlK"
+  },
+  "google_cloud": {
+    "project_id": "pickface-damage-1291",
+    "region_proposed": "asia-southeast1",
+    "cloud_run_status": "NOT_DEPLOYED_OR_VERIFIED"
+  },
+  "security": "Only OWNER-approved resource mutation; public repo cannot hold credentials; no other project accounts or datasets."
+}

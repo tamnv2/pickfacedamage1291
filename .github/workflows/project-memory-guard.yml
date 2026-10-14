@@ -1,0 +1,36 @@
+name: Pickface Project Memory Guard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'AGENTS.md'
+      - 'docs/CHANGE_CONTINUITY_PROTOCOL.md'
+      - 'docs/PROJECT_CONTEXT.md'
+      - 'docs/OWNER_DECISIONS.md'
+      - 'ops/**'
+      - 'tools/project_memory_guard.py'
+      - '.github/workflows/project-memory-guard.yml'
+  pull_request:
+    paths:
+      - 'AGENTS.md'
+      - 'docs/CHANGE_CONTINUITY_PROTOCOL.md'
+      - 'docs/PROJECT_CONTEXT.md'
+      - 'docs/OWNER_DECISIONS.md'
+      - 'ops/**'
+      - 'tools/project_memory_guard.py'
+      - '.github/workflows/project-memory-guard.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  memory-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify project scope, continuity and state
+        run: python tools/project_memory_guard.py
