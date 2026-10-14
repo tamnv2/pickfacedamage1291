@@ -28,3 +28,15 @@ Authority: explicit OWNER commands and evidence stored in this repository. This 
 - Chỉ vô hiệu hóa nghiệp vụ của Gateway cũ sau khi Cloud Run đã kiểm thử đạt yêu cầu **và có lệnh mới, rõ ràng của OWNER**. Không xóa dữ liệu, dự án hay ứng dụng cũ trong đợt thử nghiệm.
 - Trước khi thử ghi, cần thống nhất phương án tránh xung đột khi hai hệ thống dùng chung Google Sheets (Apps Script LockService không khóa Cloud Run), bộ đếm change_seq và Firebase active_operator. Đề xuất tách vùng ghi thử nghiệm và trạng thái lease cho bản mới; thiết kế chi tiết còn chờ duyệt.
 - Trong giai đoạn chạy song song, dự án vẫn tiêu thụ UrlFetchApp từ máy cũ; không được báo đã về 0 trước khi ngừng thực tế.
+
+## 2026-10-14 — PFD-001: Quyết định lưu trữ thời gian thử nghiệm (OWNER APPROVED)
+
+- Phiên bản Cloud Run **được phép đọc lịch sử V1** từ Google Sheets/Drive hiện hữu, nhưng không được ghi sửa/xoá các bản ghi, ảnh hay log V1 trong thời gian chạy song song.
+- Cloud Run V2 **ghi riêng** dữ liệu phiếu, danh mục thay đổi, ảnh, nhật ký và bộ đếm/lease của V2 trong những tài nguyên con thực sự thuộc Drive root đã chỉ định hoặc project GCP hợp lệ. Máy V1 không nhìn thấy dữ liệu V2.
+- Giữ Firebase identity hiện có để kiểm tra đăng nhập nhưng không sửa, khóa, đổi email hay quyền tài khoản cũ trong thời gian thử nghiệm.
+- OWNER yêu cầu rà soát toàn bộ thiết lập Google Cloud Run và điểm cần OWNER cấp quyền. Sau khi cấp quyền đầy đủ mới tiếp tục triển khai logic phần mềm mới; phải kiểm tra và trình OWNER chốt trước khi chạy triển khai mô hình mới.
+- Các thao tác **cấp quyền IAM, cấp quyền Drive/OAuth, liên kết Billing, cho Cloud Run endpoint công khai** vẫn là hành động nhạy cảm cần OWNER xác nhận cụ thể, không được tự suy diễn thành đã duyệt.
+- Không làm ảnh hưởng Apps Script Gateway, `runtime-config.json` và GitHub stable release cũ; chỉ có OWNER mới ra lệnh khai tử mô hình cũ sau kiểm thử.
+- Drive metadata đã xác minh root là **My Drive, không phải Shared Drive**. V2 cần danh tính có thể tạo ảnh/tệp trong My Drive theo uỷ quyền người dùng hoặc một giải pháp lưu trữ khác được OWNER duyệt; việc chia sẻ service account editor đơn thuần không đủ bảo đảm tạo file.
+
+Chi tiết checklist: `docs/plans/PFD-001_CLOUD_RUN_BOOTSTRAP.md`. Đây là đặc tả thủ tục chờ quyền, **không phải xác nhận Cloud Run đã được cấu hình**.
