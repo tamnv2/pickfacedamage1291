@@ -3,10 +3,10 @@
   "change_id": "PFD-001",
   "source_repo": "tamnv2/pickfacedamage1291",
   "working_branch": "work/pfd-001-cloud-run-migration",
-  "pr": null,
+  "pr": 22,
   "accepted_base": "v1.4.33; not independently field verified this turn",
   "deployment_gate": "Owner-approved B/C migration; separate Owner approval required for destructive data actions or access-right changes",
-  "last_checkpoint": "PFD-001-E008",
+  "last_checkpoint": "PFD-001-E009",
   "entries": [
     {
       "id": "PFD-001-E001",
@@ -150,6 +150,26 @@
         "cloud-run/model.mjs",
         "cloud-run/model.test.mjs"
       ]
+    },
+    {
+      "id": "PFD-001-E009",
+      "date_vn": "2026-10-14",
+      "topic": "Source CI read-only migration verified on Draft PR #22",
+      "kind": "TEST",
+      "status": "READ_ONLY_CI_PASS__FULL_GATEWAY_NOT_IMPLEMENTED__NO_DEPLOY",
+      "owner_approval": null,
+      "facts": [
+        "Draft PR #22 open, unmerged; source commit 41537fb5a9508372d171a68df6b941714682f1b6",
+        "GitHub Actions Pickface Project Memory Guard run 38490902760 completed success",
+        "GitHub Actions Pickface Cloud Run Migration Source Tests run 38490902757 completed success",
+        "These tests are pure source/contract structural tests, not Cloud Run provider runtime, Drive authorization or Windows field tests"
+      ],
+      "next_action": "Implement write parity safely, username alias migration, Windows networking and Cloud Run provider deployment only within authorized project; no C until B done",
+      "evidence": [
+        "https://github.com/tamnv2/pickfacedamage1291/pull/22",
+        "https://github.com/tamnv2/pickfacedamage1291/actions/runs/38490902760",
+        "https://github.com/tamnv2/pickfacedamage1291/actions/runs/38490902757"
+      ]
     }
   ],
   "resume": {
@@ -159,7 +179,8 @@
       "C Cloud Run usage dashboard"
     ],
     "implemented": [
-      "A: governance manifest/context/scope/state/decisions/continuity journal/structural guard committed and read back"
+      "A: governance manifest/context/scope/state/decisions/continuity journal/structural guard committed and read back",
+      "B partial read-only backend source contract CI PASS on PR #22; not deployed"
     ],
     "in_progress": [
       "B read-only source staged; write/API parity, Windows, GCP deploy and field verification pending"

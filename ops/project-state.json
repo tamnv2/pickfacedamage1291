@@ -12,12 +12,12 @@
   },
   "working": {
     "branch": "work/pfd-001-cloud-run-migration",
-    "pr": null,
+    "pr": 22,
     "docs_a": "DONE_COMMITTED_AND_READBACK_STRUCTURE_VALIDATED",
     "cloud_run_b": "SOURCE_STAGED_READ_ONLY_NOT_FEATURE_COMPLETE_NOT_DEPLOYED",
     "usage_dashboard_c": "APPROVED_PENDING_B",
     "deploy": "NOT_PERFORMED",
-    "ci": "NODE_CONTRACT_TEST_WORKFLOW_ADDED_RESULT_NOT_VERIFIED",
+    "ci": "READ_ONLY_SOURCE_NODE_TEST_CI_PASS_AND_PROJECT_MEMORY_GUARD_PASS_EXACT_SHA_41537fb5",
     "runtime": "NOT_VERIFIED",
     "field": "NOT_VERIFIED"
   },
@@ -29,7 +29,7 @@
     ],
     "must_finish_current_before_next": true,
     "release_boundary": "Owner authorized migration and rollout in this workstream; no destructive deletion or permission grants without explicit separate OWNER direction",
-    "last_checkpoint": "PFD-001-E008"
+    "last_checkpoint": "PFD-001-E009"
   },
   "blockers": [
     "No connected Google Cloud Run project-scoped tool or verified deployment identity in current toolset",
